@@ -1,0 +1,27 @@
+# OSRM Data (Large files)
+data/postgres_data/
+data/master_pool/*
+data/*.pbf
+data/*.osrm*
+data/instances/*
+
+!data/master_pool/.gitkeep
+!data/instances/.gitkeep
+
+# Build artifacts
+algorithm/build/
+algorithm/bin/
+*.o
+*.a
+*.so
+
+# Environment/Secrets
+.env
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Documentation 
+docs/
+*.md
