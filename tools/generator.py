@@ -43,7 +43,6 @@ class CVRPTWGenerator:
             centers = random.sample(self.pool, num_centers)
             selected = []
             for center in centers:
-                # Select closest neighbors for each cluster center
                 sorted_p = sorted(self.pool, key=lambda p: (p['lng']-center['lng'])**2 + (p['lat']-center['lat'])**2)
                 selected.extend(sorted_p[1:(n // num_centers) + 1])
             while len(selected) < n: selected.append(random.choice(self.pool))
@@ -53,7 +52,6 @@ class CVRPTWGenerator:
             return self.sample_points(half, "R") + self.sample_points(n - half, "C")
 
     def generate_instance(self, test_type, n_nodes, sample_type="RC", weight_diff="Easy", tw_diff="Easy"):
-        # 1. Setup Constraints
         max_weight = 100.0
         max_volume = 250.0
         num_drivers = max(1, n_nodes // 10)
@@ -77,15 +75,19 @@ class CVRPTWGenerator:
 
                 for d in range(num_drivers):
                     if not unassigned: break
-                    route = [depot]
-                    target_count = min(len(unassigned), 12)
 
-                    for _ in range(target_count):
+                    target_count = min(len(unassigned), 12)
+                    selected_batch = random.sample(unassigned, target_count)
+                    for p in selected_batch: unassigned.remove(p)
+
+                    route = [depot]
+                    remaining_to_sort = selected_batch.copy()
+                    while remaining_to_sort:
                         last = route[-1]
-                        # Find closest unassigned customer (Greedy Proximity)
-                        closest = min(unassigned, key=lambda p: (p['lng']-last['lng'])**2 + (p['lat']-last['lat'])**2)
-                        route.append(closest)
-                        unassigned.remove(closest)
+                        candidates = sorted(remaining_to_sort, key=lambda p: (p['lng']-last['lng'])**2 + (p['lat']-last['lat'])**2)[:3]
+                        next_p = random.choice(candidates)
+                        route.append(next_p)
+                        remaining_to_sort.remove(next_p)
 
                     leg_times = self.get_route_durations(route)
                     if not leg_times:
@@ -97,31 +99,24 @@ class CVRPTWGenerator:
                     raw_weights = [random.uniform(5.0, 15.0) for _ in range(target_count)]
                     raw_volumes = [w * random.uniform(4.0, 6.0) for w in raw_weights]
 
-                    # Find which constraint is the bottleneck for this specific route
                     w_ratio = sum(raw_weights) / max_weight
                     v_ratio = sum(raw_volumes) / max_volume
-                    # Scale everything down so the bottleneck perfectly hits our usage_target
                     bottleneck = max(w_ratio, v_ratio)
                     scale = usage_target / bottleneck
 
-                    leg_times = self.get_route_durations(route)
-                    current_time = 480.0  # 8:00 AM
+                    current_time = 480.0  
 
                     for i, p in enumerate(route[1:]):
-                        # Apply the feasibility scale
                         weight = raw_weights[i] * scale
                         volume = raw_volumes[i] * scale
 
                         w, v = weight, volume
 
-                        # Special Case: Split Capability
-                        # We intentionally break the feasibility of one parcel to force a split
                         is_split = False
                         if test_type == "Split Capability" and random.random() < 0.2:
                             oversized_w = random.uniform(110.0, 150.0)
                             oversized_v = oversized_w * random.uniform(4.0, 6.0)
 
-                            # Only use oversized if it fits in the fleet's 90% budget
                             if (current_fleet_weight + oversized_w < fleet_weight_limit and
                                 current_fleet_volume + oversized_v < fleet_volume_limit):
                                 w, v = oversized_w, oversized_v
@@ -129,14 +124,15 @@ class CVRPTWGenerator:
 
                         current_fleet_weight += w
                         current_fleet_volume += v
-                        
+
                         arrival = current_time + leg_times[i]
 
-                        # Set Time Windows around the arrival
                         tw_range = 30 if tw_diff == "Hard" else 120
-                        
-                        tw_start = max(480, int(arrival - tw_range/2))
-                        tw_end = min(1200, int(arrival + tw_range))
+
+                        noise = random.uniform(-10.0, 10.0)
+                        shifted_arrival = arrival + noise
+                        tw_start = max(480, int(shifted_arrival - tw_range/2))
+                        tw_end = min(1200, int(shifted_arrival + tw_range))
 
                         final_parcels.append({
                             "id": len(final_parcels) + 1,
@@ -144,12 +140,10 @@ class CVRPTWGenerator:
                             "weight": round(w, 2),
                             "volume": round(v, 2),
                             "time_window": [tw_start, tw_end],
-                            "is_split_test": is_split # Helper tag for your analysis
+                            "is_split_test": is_split 
                         })
-                        # Advance time (Travel + 5 min service)
                         current_time = arrival + 5.0
 
-                # Shuffle parcels so the algorithm doesn't know the seed order
                 random.shuffle(final_parcels)
 
                 return {
@@ -174,7 +168,7 @@ class CVRPTWGenerator:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             json.dump(data, f, indent=4)
-    
+
     def generate_task(self, args):
         """Helper function to run a single generation task in a thread"""
         test_type, n, path, stype, w, t = args
@@ -185,29 +179,24 @@ class CVRPTWGenerator:
         print(f"Starting Parallel Generation with {max_workers} workers...")
         tasks = []
 
-        # 1. Split Delivery
         for n in [50, 200, 500]:
             for i in range(10):
                 tasks.append(("Split Capability", n, f"data/instances/split_capability/split_{n}_{i+1}.json", "RC", "Easy", "Easy"))
 
-        # 2. Tightness
         for n in [50, 200, 500]:
             for w in ["Easy", "Hard"]:
                 for t in ["Easy", "Hard"]:
                     for i in range(10):
                         tasks.append(("Tightness", n, f"data/instances/tightness/tight_W{w[0]}_T{t[0]}_{n}_{i+1}.json", "RC", w, t))
 
-        # 3. Scalability
         for n in [50, 100, 200, 500, 1000]:
             for stype in ["C", "R", "RC"]:
                 for i in range(10):
                     tasks.append(("Scalability", n, f"data/instances/scale/scale_{stype}_{n}_{i+1}.json", stype, "Easy", "Easy"))
 
-        # Execute tasks in parallel
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(self.generate_task, t) for t in tasks]
 
-            # Use tqdm to track progress as they complete
             for future in tqdm(as_completed(futures), total=len(tasks), desc="Generating Instances"):
                 try:
                     future.result() 
