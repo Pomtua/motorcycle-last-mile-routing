@@ -1,0 +1,9 @@
+# Credentials
+.env
+
+# Large map data and OSRM build files
+data/raw/thailand-latest.*
+data/postgres_data/
+
+# OS files
+.DS_Store
