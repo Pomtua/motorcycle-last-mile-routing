@@ -22,15 +22,20 @@ def analyze():
     df['Category'] = df['Instance'].apply(get_category)
 
     df['GA_Improvement'] = (df['NN_Cost'] - df['GA_Cost']) / df['NN_Cost'] * 100
+    df['ORT_Improvement'] = (df['NN_Cost'] - df['ORT_Cost']) / df['NN_Cost'] * 100
     df['NN_Success'] = df['NN_Undelivered'] == 0
     df['GA_Success'] = df['GA_Undelivered'] == 0
+    df['ORT_Success'] = df['ORT_Undelivered'] == 0
 
     summary = df.groupby('Category').agg({
         'GA_Improvement': 'mean',
+        'ORT_Improvement': 'mean',
         'GA_Success': 'mean',
         'NN_Success': 'mean',
+        'ORT_Success': 'mean',
         'GA_ms': 'mean',
-        'OSRM_ms': 'mean',
+        'NN_ms': 'mean',
+        'ORT_ms': 'mean',
         'Prep_ms': 'mean'
     }).round(2)
 
@@ -38,7 +43,7 @@ def analyze():
     print(summary)
 
     with open('analysis_summary.md', 'w') as f:
-        f.write("
+        f.write("# Benchmark Analysis Summary\n\n")
         f.write("```\n")
         f.write(summary.to_string())
         f.write("\n```\n")
@@ -46,38 +51,45 @@ def analyze():
     plt.style.use('ggplot')
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))
 
-    categories = df['Category'].unique()
-    data_to_plot = [df[df['Category'] == cat]['GA_Improvement'].dropna() for cat in categories]
-    axes[0, 0].boxplot(data_to_plot, labels=categories)
-    axes[0, 0].set_title('GA Cost Improvement (%) over Nearest Neighbor')
-    axes[0, 0].set_ylabel('Improvement %')
-
-    time_cols = ['Prep_ms', 'OSRM_ms', 'NN_ms', 'GA_ms']
-    time_data = df.groupby('Category')[time_cols].mean()
-    time_data.plot(kind='bar', stacked=True, ax=axes[0, 1])
-    axes[0, 1].set_title('Average Execution Time Breakdown (ms)')
-    axes[0, 1].set_ylabel('Time (ms)')
-
-    success_data = df.groupby('Category').agg({'NN_Success': 'mean', 'GA_Success': 'mean'}) * 100
-    success_data.plot(kind='bar', ax=axes[1, 0])
-    axes[1, 0].set_title('Success Rate (%) - All Parcels Delivered')
-    axes[1, 0].set_ylabel('Success Rate %')
-    axes[1, 0].set_ylim(0, 105)
-
     def get_size(name):
         import re
         match = re.search(r'_(\d+)_', name)
         return int(match.group(1)) if match else 0
     df['Size'] = df['Instance'].apply(get_size)
 
-    for cat in categories:
-        cat_df = df[df['Category'] == cat].groupby('Size')['GA_ms'].mean().reset_index()
-        axes[1, 1].plot(cat_df['Size'], cat_df['GA_ms'], marker='o', label=cat)
+    # 1. Execution time vs instance size
+    ax1 = axes[0, 0]
+    time_data = df.groupby('Size').agg({'NN_ms': 'mean', 'GA_ms': 'mean', 'ORT_ms': 'mean'})
+    time_data.plot(kind='bar', ax=ax1)
+    ax1.set_title('Execution Time vs Instance Size')
+    ax1.set_ylabel('Time (ms)')
+    ax1.set_xlabel('Instance Size (N)')
 
-    axes[1, 1].set_title('GA Execution Time Scaling')
-    axes[1, 1].set_ylabel('Time (ms)')
-    axes[1, 1].set_xlabel('Instance Size (Parcels)')
-    axes[1, 1].legend()
+    # 2. Solution quality (Cost) vs instance size
+    ax2 = axes[0, 1]
+    cost_data = df.groupby('Size').agg({'NN_Cost': 'mean', 'GA_Cost': 'mean', 'ORT_Cost': 'mean'})
+    cost_data.plot(kind='bar', ax=ax2)
+    ax2.set_title('Solution Quality (Total Cost) vs Instance Size')
+    ax2.set_ylabel('Total Cost')
+    ax2.set_xlabel('Instance Size (N)')
+
+    # 3. GA and ORT Improvement by Category
+    ax3 = axes[1, 0]
+    categories = df['Category'].unique()
+    
+    # We use a grouped bar chart instead of a boxplot since there are multiple solvers
+    imp_data = df.groupby('Category').agg({'GA_Improvement': 'mean', 'ORT_Improvement': 'mean'})
+    imp_data.plot(kind='bar', ax=ax3)
+    ax3.set_title('Cost Improvement (%) over NN by Category')
+    ax3.set_ylabel('Improvement (%)')
+
+    # 4. Success Rate by Category
+    ax4 = axes[1, 1]
+    success_data = df.groupby('Category').agg({'NN_Success': 'mean', 'GA_Success': 'mean', 'ORT_Success': 'mean'}) * 100
+    success_data.plot(kind='bar', ax=ax4)
+    ax4.set_title('Feasible Solution Success Rate (%) by Category')
+    ax4.set_ylabel('Success Rate (%)')
+    ax4.set_ylim(0, 105)
 
     plt.tight_layout()
     plt.savefig('benchmark_charts.png')

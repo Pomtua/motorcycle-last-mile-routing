@@ -8,8 +8,19 @@ bool ConstraintChecker::evaluateRoute(const RoutingInstance& instance, Route& ro
 
     double current_weight = 0.0;
     double current_volume = 0.0;
+    std::string route_zone = "";
+
     for (int pid : route.parcel_ids) {
-        const auto& p = instance.parcels[instance.parcel_id_to_index[pid]];
+        const auto& p = instance.parcels[instance.parcel_id_to_index.at(pid)];
+        int loc_idx = instance.id_to_index.at(p.location_id);
+        std::string p_zone = instance.locations[loc_idx].zone_id;
+
+        if (route_zone.empty() && p_zone != "ZONE_UNK" && p_zone != "DEPOT") {
+            route_zone = p_zone;
+        } else if (!route_zone.empty() && p_zone != "ZONE_UNK" && p_zone != "DEPOT" && p_zone != route_zone) {
+            return false; // Zone constraint violation
+        }
+
         current_weight += p.weight;
         current_volume += p.volume;
     }
@@ -73,6 +84,24 @@ bool ConstraintChecker::checkInsertionFeasibility(const RoutingInstance& instanc
 
     if (route.total_weight + parcel.weight > vehicle.capacity_weight || 
         route.total_volume + parcel.volume > vehicle.capacity_volume) return false;
+
+    std::string route_zone = "";
+    for (int pid : route.parcel_ids) {
+        const auto& p = instance.parcels[instance.parcel_id_to_index.at(pid)];
+        int loc_idx = instance.id_to_index.at(p.location_id);
+        std::string p_zone = instance.locations[loc_idx].zone_id;
+        if (p_zone != "ZONE_UNK" && p_zone != "DEPOT") {
+            route_zone = p_zone;
+            break;
+        }
+    }
+
+    int parcel_loc_idx = instance.id_to_index.at(parcel.location_id);
+    std::string parcel_zone = instance.locations[parcel_loc_idx].zone_id;
+
+    if (!route_zone.empty() && parcel_zone != "ZONE_UNK" && parcel_zone != "DEPOT" && parcel_zone != route_zone) {
+        return false;
+    }
 
     int prev_loc = route.location_ids[pos - 1];
     int next_loc = route.location_ids[pos];

@@ -1,4 +1,4 @@
-name: senior-project-create-database
+name: motorcycle-last-mile-routing
 services:
   db:
     image: postgis/postgis:17-3.5
@@ -10,11 +10,16 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "5435:5432"
     volumes:
       - ${DB_DATA_PATH}:/var/lib/postgresql/data
     networks:
       - osm_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   osm2pgsql:
     image: iboates/osm2pgsql:latest
@@ -35,7 +40,51 @@ services:
       - "5000:5000"
     volumes:
       - ./data:/data
+    networks:
+      - osm_net
     command: osrm-routed --algorithm mld --max-table-size 2000 /data/thailand-latest.osrm
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: senior_backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+      - OSRM_HOST=osrm
+      - LD_LIBRARY_PATH=/app/algorithm/build/ortools/lib
+    volumes:
+      - ./backend:/app/backend
+      - /app/backend/node_modules
+      - ./algorithm:/app/algorithm
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      osrm:
+        condition: service_started
+    networks:
+      - osm_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: senior_frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+      - /app/frontend/.next
+    depends_on:
+      - backend
+    networks:
+      - osm_net
 
 networks:
   osm_net:

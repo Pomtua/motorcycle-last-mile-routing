@@ -1,5 +1,6 @@
 #include "OsrmClient.h"
 #include <httplib.h>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <sstream>
@@ -10,7 +11,13 @@ namespace routing {
 namespace fs = std::filesystem;
 
 OsrmClient::OsrmClient(const std::string& host, int port) 
-    : host_(host), port_(port) {}
+    : host_(host), port_(port) {
+    if (host_ == "localhost") {
+        if (const char* env_host = std::getenv("OSRM_HOST")) {
+            host_ = env_host;
+        }
+    }
+}
 
 void OsrmClient::fillMatrices(RoutingInstance& instance, const std::string& cache_key) {
     if (instance.locations.empty()) return;
@@ -27,6 +34,7 @@ void OsrmClient::fillMatrices(RoutingInstance& instance, const std::string& cach
     }
 
     httplib::Client cli(host_, port_);
+    cli.set_connection_timeout(2);
     cli.set_read_timeout(60); 
 
     std::string coords = formatCoordinates(instance.locations);

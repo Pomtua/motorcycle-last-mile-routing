@@ -16,6 +16,7 @@
 #include "KMeansClusterer.h"
 #include "ALNSSolver.h"
 #include "GASolver.h"
+#include "ORToolsSolver.h"
 
 namespace fs = std::filesystem;
 
@@ -44,8 +45,9 @@ void processInstance(const std::string& filepath, int current, int total, std::o
 
         Timer t_prep;
         routing::RoutingInstance instance = routing::JsonParser::parse(filepath);
+        std::vector<routing::Parcel> original_parcels = instance.parcels;
+        std::vector<int> original_parcel_id_to_index = instance.parcel_id_to_index;
         routing::SplitDeliveryProcessor::process(instance);
-        routing::KMeansClusterer::process(instance);
         double prep_ms = t_prep.elapsedMs();
 
         std::string filename = fs::path(filepath).filename().string();
@@ -54,6 +56,10 @@ void processInstance(const std::string& filepath, int current, int total, std::o
         routing::OsrmClient osrm("localhost", 5000);
         osrm.fillMatrices(instance, filename);
         double osrm_ms = t_osrm.elapsedMs();
+
+        routing::RoutingInstance unsplit_instance = instance;
+        unsplit_instance.parcels = original_parcels;
+        unsplit_instance.parcel_id_to_index = original_parcel_id_to_index;
 
         Timer t_nn;
         routing::NearestNeighborSolver nn_solver;
@@ -65,6 +71,12 @@ void processInstance(const std::string& filepath, int current, int total, std::o
         auto ga_result = ga_solver.solve(instance);
         double ga_ms = t_ga.elapsedMs();
 
+        Timer t_ort;
+        routing::ORToolsSolver ort_solver;
+        double ort_time_limit = std::max(1.0, ga_ms / 1000.0);
+        auto ort_result = ort_solver.solve(unsplit_instance, ort_time_limit);
+        double ort_ms = t_ort.elapsedMs();
+
         double total_ms = t_total.elapsedMs();
 
         {
@@ -72,7 +84,8 @@ void processInstance(const std::string& filepath, int current, int total, std::o
             csv_file << filename << "," 
                      << nn_result.undelivered_count << "," << nn_result.total_cost << ","
                      << ga_result.undelivered_count << "," << ga_result.total_cost << ","
-                     << prep_ms << "," << osrm_ms << "," << nn_ms << "," << ga_ms << "\n";
+                     << ort_result.undelivered_count << "," << ort_result.total_cost << ","
+                     << prep_ms << "," << osrm_ms << "," << nn_ms << "," << ga_ms << "," << ort_ms << "\n";
 
             csv_file.flush();
         }
@@ -83,6 +96,7 @@ void processInstance(const std::string& filepath, int current, int total, std::o
                       << " | OSRM: " << osrm_ms << "ms"
                       << " | NN: " << nn_ms << "ms"
                       << " | GA: " << ga_ms << "ms"
+                      << " | ORT: " << ort_ms << "ms"
                       << " | Total: " << total_ms << "ms" << std::endl;
         }
 
@@ -115,8 +129,8 @@ int main() {
     std::cout << "Found " << total << " instances to process." << std::endl;
 
     std::ofstream csv_file("benchmark_results.csv");
-    csv_file << "Instance,NN_Undelivered,NN_Cost,GA_Undelivered,GA_Cost,"
-             << "Prep_ms,OSRM_ms,NN_ms,GA_ms\n";
+    csv_file << "Instance,NN_Undelivered,NN_Cost,GA_Undelivered,GA_Cost,ORT_Undelivered,ORT_Cost,"
+             << "Prep_ms,OSRM_ms,NN_ms,GA_ms,ORT_ms\n";
 
     std::atomic<int> current_idx(0);
     int num_threads = std::thread::hardware_concurrency();

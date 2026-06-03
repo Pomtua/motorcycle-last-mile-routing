@@ -1,6 +1,7 @@
 #pragma once
 #include "RoutingInstance.h"
 #include "ResultStructures.h"
+#include "ConstraintChecker.h"
 #include <chrono>
 
 namespace routing {
@@ -13,6 +14,8 @@ public:
     virtual RoutingResult solve(const RoutingInstance& instance) = 0;
 
 protected:
+    static void repairUndelivered(const RoutingInstance& instance, RoutingResult& result);
+
     RoutingResult createResult(const std::string& name) {
         RoutingResult res;
         res.solver_name = name;

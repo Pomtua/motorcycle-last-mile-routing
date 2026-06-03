@@ -1,0 +1,28 @@
+{
+    "latex-workshop.formatting.latex": "latexindent",
+    "latex-workshop.latex.outDir": "%DIR%/build",
+    "latex-workshop.latex.recipes": [
+        {
+            "name": "latexmk (xelatex)",
+            "tools": [
+                "xelatexmk"
+            ]
+        }
+    ],
+    "latex-workshop.latex.tools": [
+        {
+            "name": "xelatexmk",
+            "command": "latexmk",
+            "args": [
+                "-shell-escape",
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-pdfxe",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ],
+            "env": {}
+        }
+    ]
+}

@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model SimulationRun {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  instanceJson  Json
+  status        String   // "PENDING", "RUNNING", "COMPLETED", "FAILED"
+  solver        String   // "GA", "NN", "ORTools"
+  
+  routes        Route[]
+
+  @@map("simulation_runs")
+}
+
+model Route {
+  id             String        @id @default(uuid())
+  simulationId   String
+  vehicleId      Int
+  totalDistance  Float
+  totalDuration  Float
+  
+  simulation     SimulationRun @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+  stops          RouteStop[]
+
+  @@map("routes")
+}
+
+model RouteStop {
+  id           String   @id @default(uuid())
+  routeId      String
+  sequence     Int
+  parcelId     Int
+  arrivalTime  Float
+  lat          Float
+  lng          Float
+
+  route        Route    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@map("route_stops")
+}

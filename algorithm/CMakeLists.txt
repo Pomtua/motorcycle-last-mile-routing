@@ -26,10 +26,14 @@ FetchContent_MakeAvailable(httplib)
 # Include directories
 include_directories(include)
 
+# Google OR-Tools
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/build/ortools")
+find_package(ortools REQUIRED CONFIG)
+
 # Core Library
 file(GLOB_RECURSE CORE_SOURCES "src/*.cpp")
 add_library(routing_core STATIC ${CORE_SOURCES})
-target_link_libraries(routing_core PRIVATE nlohmann_json::nlohmann_json httplib::httplib)
+target_link_libraries(routing_core PRIVATE nlohmann_json::nlohmann_json httplib::httplib ortools::ortools)
 
 # Create the engine executable
 add_executable(routing_engine main.cpp)
@@ -41,4 +45,18 @@ target_link_libraries(run_benchmark PRIVATE routing_core)
 
 # Tests
 enable_testing()
-# (GTest or similar can be added here later)
+
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG release-1.12.1
+)
+FetchContent_MakeAvailable(googletest)
+
+file(GLOB_RECURSE TEST_SOURCES "tests/*.cpp")
+add_executable(run_tests ${TEST_SOURCES})
+target_link_libraries(run_tests PRIVATE routing_core GTest::gtest_main)
+add_test(NAME AllTests COMMAND run_tests)
+
+add_executable(verify_solver_integrity verify_solver_integrity.cpp)
+target_link_libraries(verify_solver_integrity PRIVATE routing_core)

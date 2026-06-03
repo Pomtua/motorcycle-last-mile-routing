@@ -62,9 +62,11 @@ class CVRPTWGenerator:
                 fleet_volume_limit = num_drivers * max_volume * 0.90
                 current_fleet_weight = 0.0
                 current_fleet_volume = 0.0
+                min_splits = max(2, n_nodes // 20) if test_type == "Split Capability" else 0
+                oversized_count = 0
 
                 if test_type == "Split Capability":
-                    usage_target = 0.60
+                    usage_target = 0.45
                 else:
                     usage_target = 0.95 if (weight_diff == "Hard") else 0.70
 
@@ -113,14 +115,21 @@ class CVRPTWGenerator:
                         w, v = weight, volume
 
                         is_split = False
-                        if test_type == "Split Capability" and random.random() < 0.2:
-                            oversized_w = random.uniform(110.0, 150.0)
-                            oversized_v = oversized_w * random.uniform(4.0, 6.0)
-
-                            if (current_fleet_weight + oversized_w < fleet_weight_limit and
-                                current_fleet_volume + oversized_v < fleet_volume_limit):
-                                w, v = oversized_w, oversized_v
-                                is_split = True
+                        if test_type == "Split Capability":
+                            remaining_customers = n_nodes - len(final_parcels)
+                            needed_splits = min_splits - oversized_count
+                            if needed_splits > 0 and (remaining_customers <= needed_splits or random.random() < 0.2):
+                                oversized_w = random.uniform(110.0, 150.0)
+                                oversized_v = random.uniform(260.0, 320.0)
+                                remaining_drivers = num_drivers - d
+                                reserved_factor = 0.20 if test_type == "Split Capability" else usage_target
+                                reserved_w = (remaining_drivers - 1) * max_weight * reserved_factor
+                                reserved_v = (remaining_drivers - 1) * max_volume * reserved_factor
+                                if (current_fleet_weight + oversized_w + reserved_w < fleet_weight_limit and
+                                    current_fleet_volume + oversized_v + reserved_v < fleet_volume_limit):
+                                    w, v = oversized_w, oversized_v
+                                    is_split = True
+                                    oversized_count += 1
 
                         current_fleet_weight += w
                         current_fleet_volume += v
@@ -140,9 +149,23 @@ class CVRPTWGenerator:
                             "weight": round(w, 2),
                             "volume": round(v, 2),
                             "time_window": [tw_start, tw_end],
-                            "is_split_test": is_split 
+                            "is_split_test": is_split
                         })
                         current_time = arrival + 5.0
+
+                total_w = sum(p['weight'] for p in final_parcels)
+                total_v = sum(p['volume'] for p in final_parcels)
+                if total_w > num_drivers * max_weight or total_v > num_drivers * max_volume:
+                    raise ValueError(
+                        f"Fleet capacity exceeded after generation: "
+                        f"w={total_w:.1f}/{num_drivers * max_weight:.1f}, "
+                        f"v={total_v:.1f}/{num_drivers * max_volume:.1f}. Retrying..."
+                    )
+
+                if test_type == "Split Capability" and oversized_count < min_splits:
+                    raise ValueError(
+                        f"Could not generate enough oversized parcels ({oversized_count}/{min_splits}). Retrying..."
+                    )
 
                 random.shuffle(final_parcels)
 
@@ -178,20 +201,22 @@ class CVRPTWGenerator:
     def generate_all(self, max_workers=10):
         print(f"Starting Parallel Generation with {max_workers} workers...")
         tasks = []
+        
+        num_replicates = 2
 
         for n in [50, 200, 500]:
-            for i in range(10):
+            for i in range(num_replicates):
                 tasks.append(("Split Capability", n, f"data/instances/split_capability/split_{n}_{i+1}.json", "RC", "Easy", "Easy"))
 
         for n in [50, 200, 500]:
             for w in ["Easy", "Hard"]:
                 for t in ["Easy", "Hard"]:
-                    for i in range(10):
+                    for i in range(num_replicates):
                         tasks.append(("Tightness", n, f"data/instances/tightness/tight_W{w[0]}_T{t[0]}_{n}_{i+1}.json", "RC", w, t))
 
         for n in [50, 100, 200, 500, 1000]:
             for stype in ["C", "R", "RC"]:
-                for i in range(10):
+                for i in range(num_replicates):
                     tasks.append(("Scalability", n, f"data/instances/scale/scale_{stype}_{n}_{i+1}.json", stype, "Easy", "Easy"))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

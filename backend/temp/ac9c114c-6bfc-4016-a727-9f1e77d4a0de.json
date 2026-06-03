@@ -1,0 +1,1 @@
+{"resources":{"depot_location":{"lat":14,"lng":100},"num_drivers":2,"max_weight_capacity":20,"max_volume_capacity":50},"parcels":[{"id":1,"lat":14.1,"lng":100.1,"weight":5,"volume":5,"time_window":[480,600]}]}
