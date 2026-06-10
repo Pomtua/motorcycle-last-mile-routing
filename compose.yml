@@ -40,6 +40,18 @@ services:
       - PGPASSWORD=${POSTGRES_PASSWORD}
     entrypoint: ["osm2pgsql"]
 
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: osrm_server
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./infra/osrm/graph:/data
+    networks:
+      - osm_net
+    command: osrm-routed --algorithm mld --max-table-size 2000 /data/thailand-latest.osrm
+
 networks:
   osm_net:
     driver: bridge

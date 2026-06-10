@@ -7,3 +7,18 @@ data/postgres_data/
 
 # OS files
 .DS_Store
+
+# Docs
+*.md
+!README.md
+
+# Python environment
+.venv/
+__pycache__/
+*.pyc
+
+# OSRM generated graph files
+infra/osrm/graph/*.osrm*
+
+# Generated datasets
+data/master_pool/
