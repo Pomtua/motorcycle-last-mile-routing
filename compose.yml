@@ -41,7 +41,7 @@ services:
     entrypoint: ["osm2pgsql"]
 
   osrm:
-    image: osrm/osrm-backend:latest
+    image: ghcr.io/project-osrm/osrm-backend:26.6.5-debian
     container_name: osrm_server
     restart: unless-stopped
     ports:
