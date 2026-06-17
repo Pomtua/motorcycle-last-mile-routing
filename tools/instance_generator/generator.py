@@ -3,9 +3,9 @@ import json
 import math
 import os
 import requests
-import time
 import numpy as np
 import hashlib
+from tqdm import tqdm
 
 class InstanceGenerator:
     def __init__(self, seed, master_pool_path):
@@ -322,37 +322,27 @@ v_max):
             raise Exception("More routes than fleet size")
 
     def run(self, config, output_path):
-        t0 = time.time()
         self.rng = np.random.default_rng(config['seed'])
         self.load_coordinates()
-        t1 = time.time()
         depot = self.select_depot()
-        t2 = time.time()
         customers = self.sample_customers(config['n'], config['spatial_class'], depot)
-        t3 = time.time()
         demands = self.generate_demands(customers, config['demand_class'], config['w_max'], config['v_max'])
-        t4 = time.time()
         routes, durations, distances = self.generate_reference_routes(
             depot, customers, demands, config['w_max'], config['v_max'], config['alpha']
         )
-        t5 = time.time()
         refined_routes = self.simulate_and_refine_routes(routes, durations, config['horizon'])
-        t6 = time.time()
         time_windows = self.generate_time_windows(
             refined_routes, customers, config['delta_min'], config['delta_max'], config['horizon']
         )
-        t7 = time.time()
         fleet_size = int(math.ceil(config['beta'] * len(refined_routes)))
         self.validate_instance(
             depot, customers, demands, time_windows, fleet_size, durations, distances, refined_routes, config['horizon'], config['w_max'],
             config['v_max']
         )
-        t8 = time.time()
         diff_metrics = self.calculate_difficulty_metrics(
             depot, customers, demands, time_windows, fleet_size, durations, distances, refined_routes, config['horizon'], config['w_max'],
             config['v_max']
         )
-        t9 = time.time()
         nodes = []
         nodes.append({
             'osm_id': depot['osm_id'],
@@ -412,18 +402,7 @@ v_max):
         solution_path = output_path.replace('_instance.json', '_solution.json')
         with open(solution_path, 'w', encoding='utf-8') as f:
             json.dump(solution_data, f, indent=2)
-        t10 = time.time()
-        print(f"  [Profile] Load coordinates: {t1 - t0:.4f}s")
-        print(f"  [Profile] Select depot: {t2 - t1:.4f}s")
-        print(f"  [Profile] Sample customers: {t3 - t2:.4f}s")
-        print(f"  [Profile] Generate demands: {t4 - t3:.4f}s")
-        print(f"  [Profile] Generate ref routes (OSRM): {t5 - t4:.4f}s")
-        print(f"  [Profile] Simulate & refine: {t6 - t5:.4f}s")
-        print(f"  [Profile] Generate time windows: {t7 - t6:.4f}s")
-        print(f"  [Profile] Validate instance: {t8 - t7:.4f}s")
-        print(f"  [Profile] Difficulty metrics: {t9 - t8:.4f}s")
-        print(f"  [Profile] Write output JSON: {t10 - t9:.4f}s")
-        print(f"  [Profile] Total run time: {t10 - t0:.4f}s")
+
 
 def run_task(task_args):
     config, filepath, master_pool_path = task_args
@@ -472,7 +451,6 @@ if __name__ == '__main__':
                             filepath = os.path.join('data/instances', filename)
                             tasks.append((config, filepath, master_pool_path))
 
-        total_instances = len(tasks)
 
         print("Pre-fetching OSRM tables for unique customer sets...")
         unique_sets = {}
@@ -484,27 +462,24 @@ if __name__ == '__main__':
 
         generator = InstanceGenerator(seed=42, master_pool_path=master_pool_path)
         generator.load_coordinates()
-        for key, config in unique_sets.items():
+        for key, config in tqdm(unique_sets.items(), desc="Pre-fetching OSRM"):
             generator.rng = np.random.default_rng(config['seed'])
             depot = generator.select_depot()
             customers = generator.sample_customers(config['n'], config['spatial_class'], depot)
             generator.call_osrm_table([depot] + customers)
 
         import concurrent.futures
-        max_workers = max(1, os.cpu_count() // 2)
-        print(f"Starting parallel generation with {max_workers} workers (half of total threads: {os.cpu_count()})")
+        max_workers = max(1, os.cpu_count())
+        print(f"Starting parallel generation with {max_workers} workers (total threads: {os.cpu_count()})")
 
-        generated_count = 0
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(run_task, task): task for task in tasks}
-            for future in concurrent.futures.as_completed(futures):
+            pbar = tqdm(concurrent.futures.as_completed(futures), total=len(tasks), desc="Generating instances")
+            for future in pbar:
                 success, filepath, err = future.result()
-                generated_count += 1
-                filename = os.path.basename(filepath)
-                if success:
-                    print(f"Generated {generated_count}/{total_instances} instances: {filename}")
-                else:
-                    print(f"Error {filename}: {err}")
+                if not success:
+                    filename = os.path.basename(filepath)
+                    pbar.write(f"Error {filename}: {err}")
     else:
         generator = InstanceGenerator(seed=42, master_pool_path=master_pool_path)
         test_config = {
