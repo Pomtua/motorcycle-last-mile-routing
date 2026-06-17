@@ -89,6 +89,10 @@ class InstanceGenerator:
             sampled_r = [remaining_candidates[i] for i in indices]
             return sampled_c + sampled_r
 
+    def _clipped_normal(self, mean, std, low, high):
+        x = self.rng.normal(mean, std)
+        return max(low, min(high, x))
+
     def generate_demands(self, customers, demand_class, w_max, v_max):
         demands = []
         n = len(customers)
@@ -103,8 +107,21 @@ class InstanceGenerator:
                 w = self.rng.uniform(0.70 * w_max, 1.30 * w_max)
             else:
                 w = self.rng.uniform(0.10 * w_max, 0.50 * w_max)
-            rho = self.rng.choice([80.0, 200.0, 500.0], p=[0.3, 0.5, 0.2])
-            vol = w / rho
+
+            category = self.rng.choice(
+                ["TEXTILE_AND_SOFT_GOODS", "CONSUMER_PACKAGED_GOODS", "DENSE_COMMODITIES"],
+                p=[0.3, 0.5, 0.2]
+            )
+            if category == "TEXTILE_AND_SOFT_GOODS":
+                rho = self._clipped_normal(120.0, 30.0, 50.0, 200.0)
+            elif category == "CONSUMER_PACKAGED_GOODS":
+                rho = self._clipped_normal(400.0, 100.0, 150.0, 700.0)
+            else:
+                rho = self._clipped_normal(800.0, 150.0, 400.0, 1400.0)
+
+            packing_efficiency = self.rng.uniform(0.35, 0.75)
+            vol = (w / rho) / packing_efficiency
+
             demands.append({
                 'osm_id': customers[i]['osm_id'],
                 'weight': round(w, 2),
@@ -257,15 +274,19 @@ v_max):
         for osm_id, tw in time_windows.items():
             tw_tights.append((tw['tw_end'] - tw['tw_start']) / horizon)
         mean_tw_tight = sum(tw_tights) / len(tw_tights) if tw_tights else 0.0
-        detours = []
+
+        total_osrm_dist = 0.0
+        total_eucl_dist = 0.0
         for idx, c in enumerate(customers):
             d_osrm = distances[0][idx + 1]
             dy = (c['lat'] - depot['lat']) * 111300
             dx = (c['lng'] - depot['lng']) * 111300 * math.cos(math.radians(depot['lat']))
             d_eucl = math.sqrt(dx**2 + dy**2)
-            if d_eucl > 0:
-                detours.append(d_osrm / d_eucl)
-        mean_detour = sum(detours) / len(detours) if detours else 1.0
+            total_osrm_dist += d_osrm
+            total_eucl_dist += d_eucl
+
+        circuity_factor = total_osrm_dist / total_eucl_dist if total_eucl_dist > 0 else 1.0
+
         ref_cost = 0.0
         for r in refined_routes:
             prev_idx = 0
@@ -278,7 +299,7 @@ v_max):
             'load_factor': round(load_f, 4),
             'volume_factor': round(vol_f, 4),
             'tw_tightness': round(mean_tw_tight, 4),
-            'detour_ratio': round(mean_detour, 4),
+            'detour_ratio': round(circuity_factor, 4),
             'reference_cost': round(ref_cost, 2)
         }
 
