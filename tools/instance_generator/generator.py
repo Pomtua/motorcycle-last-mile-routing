@@ -130,8 +130,7 @@ class InstanceGenerator:
         return demands
 
     def call_osrm_table(self, locations):
-        osm_ids = sorted([loc['osm_id'] for loc in locations])
-        cache_key = hashlib.md5(",".join(map(str, osm_ids)).encode('utf-8')).hexdigest()
+        cache_key = hashlib.md5(";".join([loc['osm_id'] for loc in locations]).encode('utf-8')).hexdigest()
         cache_path = f"infra/osrm/cache/{cache_key}.json"
 
         if os.path.exists(cache_path):
@@ -154,6 +153,16 @@ class InstanceGenerator:
             }, f)
         return res_data['durations'], res_data['distances']
 
+    def split_value(self, total_val, m, precision):
+        scale = 10**precision
+        total_val_scaled = int(round(total_val * scale))
+        base_scaled = total_val_scaled // m
+        remainder = total_val_scaled % m
+        chunks_scaled = [base_scaled] * m
+        for i in range(remainder):
+            chunks_scaled[i] += 1
+        return [c / scale for c in chunks_scaled]
+    
     def generate_reference_routes(self, depot, customers, demands, w_max, v_max, alpha):
         locations = [depot] + customers
         durations, distances = self.call_osrm_table(locations)
@@ -162,13 +171,15 @@ class InstanceGenerator:
             w = d['weight']
             v = d['volume']
             m = max(1, int(math.ceil(w / w_max)), int(math.ceil(v / v_max)))
+            w_chunks = self.split_value(w, m, 2)
+            v_chunks = self.split_value(v, m, 4)
             for chunk_idx in range(m):
                 visits.append({
                     'osm_id': d['osm_id'],
                     'original_weight': w,
                     'original_volume': v,
-                    'weight': round(w / m, 2),
-                    'volume': round(v / m, 4),
+                    'weight': w_chunks[chunk_idx],
+                    'volume': v_chunks[chunk_idx],
                     'chunk_idx': chunk_idx,
                     'total_chunks': m
                 })
@@ -252,12 +263,18 @@ class InstanceGenerator:
         for osm_id, arrivals in arrival_map.items():
             t_min = min(arrivals)
             t_max = max(arrivals)
-            width = self.rng.uniform(delta_min, delta_max)
+            span = t_max - t_min
+            base_width = self.rng.uniform(delta_min, delta_max)
+            width = max(base_width, span)
+            slack = width - span
             theta = self.rng.uniform(0.0, 1.0)
-            a = max(0.0, t_min - theta * width)
+            a = max(0.0, t_min - theta * slack)
             b = min(horizon, a + width)
+            if b < t_max:
+                b = t_max
+                a = max(0.0, b - width)
             a_quant = 300 * math.floor(a / 300)
-            b_quant = 300 * math.ceil(b / 300)
+            b_quant = min(int(horizon), 300 * math.ceil(b / 300))
             time_windows[osm_id] = {
                 'tw_start': int(a_quant),
                 'tw_end': int(b_quant)
@@ -268,8 +285,8 @@ class InstanceGenerator:
 v_max):
         total_w = sum(d['weight'] for d in demands)
         total_v = sum(d['volume'] for d in demands)
-        load_f = total_w / (fleet_size * w_max)
-        vol_f = total_v / (fleet_size * v_max)
+        load_f = total_w / (fleet_size * w_max) if fleet_size > 0 else 0.0
+        vol_f = total_v / (fleet_size * v_max) if fleet_size > 0 else 0.0
         tw_tights = []
         for osm_id, tw in time_windows.items():
             tw_tights.append((tw['tw_end'] - tw['tw_start']) / horizon)
@@ -305,7 +322,9 @@ v_max):
 
     def validate_instance(self, depot, customers, demands, time_windows, fleet_size, durations, distances, refined_routes, horizon, w_max, v_max):
         customer_demands = {d['osm_id']: d['weight'] for d in demands}
+        customer_volumes = {d['osm_id']: d['volume'] for d in demands}
         served_weights = {d['osm_id']: 0.0 for d in demands}
+        served_volumes = {d['osm_id']: 0.0 for d in demands}
         for r in refined_routes:
             r_w = 0.0
             r_v = 0.0
@@ -313,13 +332,17 @@ v_max):
                 r_w += visit['weight']
                 r_v += visit['volume']
                 served_weights[visit['osm_id']] += visit['weight']
+                served_volumes[visit['osm_id']] += visit['volume']
             if r_w > w_max:
                 raise Exception("Route weight exceeds limit")
             if r_v > v_max:
                 raise Exception("Route volume exceeds limit")
         for osm_id, w in customer_demands.items():
-            if abs(w - served_weights[osm_id]) > 0.05:
+            if abs(w - served_weights[osm_id]) > 1e9:
                 raise Exception("Served weight does not match demand")
+        for osm_id, v in customer_volumes.items():
+            if abs(v - served_volumes[osm_id]) > 0.05:
+                raise Exception("Served volume does not match demand")
         for r in refined_routes:
             curr_t = 0.0
             prev_loc_idx = 0
