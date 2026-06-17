@@ -299,7 +299,7 @@ v_max):
             'load_factor': round(load_f, 4),
             'volume_factor': round(vol_f, 4),
             'tw_tightness': round(mean_tw_tight, 4),
-            'detour_ratio': round(circuity_factor, 4),
+            'circuity_factor': round(circuity_factor, 4),
             'reference_cost': round(ref_cost, 2)
         }
 
