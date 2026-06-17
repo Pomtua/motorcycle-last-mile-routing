@@ -5,6 +5,7 @@ import os
 import requests
 import time
 import numpy as np
+import hashlib
 
 class InstanceGenerator:
     def __init__(self, seed, master_pool_path):
@@ -112,12 +113,28 @@ class InstanceGenerator:
         return demands
 
     def call_osrm_table(self, locations):
+        osm_ids = sorted([loc['osm_id'] for loc in locations])
+        cache_key = hashlib.md5(",".join(map(str, osm_ids)).encode('utf-8')).hexdigest()
+        cache_path = f"infra/osrm/cache/{cache_key}.json"
+
+        if os.path.exists(cache_path):
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data['durations'], data['distances']
+            
         coords_str = ";".join([f"{loc['lng']},{loc['lat']}" for loc in locations])
         url = f"http://localhost:5000/table/v1/motorcycle/{coords_str}?annotations=duration,distance"
         response = self.http_session.get(url)
         res_data = response.json()
         if res_data.get('code') != 'Ok':
             raise Exception("OSRM table call failed")
+        
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'durations': res_data['durations'],
+                'distances': res_data['distances']
+            }, f)
         return res_data['durations'], res_data['distances']
 
     def generate_reference_routes(self, depot, customers, demands, w_max, v_max, alpha):
@@ -408,11 +425,21 @@ v_max):
         print(f"  [Profile] Write output JSON: {t10 - t9:.4f}s")
         print(f"  [Profile] Total run time: {t10 - t0:.4f}s")
 
+def run_task(task_args):
+    config, filepath, master_pool_path = task_args
+    generator = InstanceGenerator(seed=config['seed'], master_pool_path=master_pool_path)
+    try:
+        generator.run(config, filepath)
+        return True, filepath, None
+    except Exception as e:
+        return False, filepath, str(e)
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch', action='store_true')
     args = parser.parse_args()
+    master_pool_path = 'data/master_pool/refined_coordinates.csv'
     if args.batch:
         sizes = [20, 50, 100, 200, 500, 1000]
         spatials = ['R', 'C', 'RC']
@@ -421,10 +448,8 @@ if __name__ == '__main__':
             ('tight', 1800.0, 3600.0),
             ('loose', 5400.0, 14400.0)
         ]
-        seeds = [42]
-        generator = InstanceGenerator(seed=42, master_pool_path='data/master_pool/refined_coordinates.csv')
-        generated_count = 0
-        total_instances = len(sizes) * len(spatials) * len(demands) * len(tw_types) * len(seeds)
+        seeds = [42]        
+        tasks = []
         for n in sizes:
             for sp in spatials:
                 for dm in demands:
@@ -445,14 +470,43 @@ if __name__ == '__main__':
                             }
                             filename = f"{sp}_{dm}_n{n}_{tw_name}_s{seed}_instance.json"
                             filepath = os.path.join('data/instances', filename)
-                            try:
-                                generator.run(config, filepath)
-                                generated_count += 1
-                                print(f"Generated {generated_count}/{total_instances} instances: {filename}")
-                            except Exception as e:
-                                print(f"Error {filename}: {e}")
+                            tasks.append((config, filepath, master_pool_path))
+
+        total_instances = len(tasks)
+
+        print("Pre-fetching OSRM tables for unique customer sets...")
+        unique_sets = {}
+        for task in tasks:
+            config = task[0]
+            key = (config['n'], config['spatial_class'], config['seed'])
+            if key not in unique_sets:
+                unique_sets[key] = config
+
+        generator = InstanceGenerator(seed=42, master_pool_path=master_pool_path)
+        generator.load_coordinates()
+        for key, config in unique_sets.items():
+            generator.rng = np.random.default_rng(config['seed'])
+            depot = generator.select_depot()
+            customers = generator.sample_customers(config['n'], config['spatial_class'], depot)
+            generator.call_osrm_table([depot] + customers)
+
+        import concurrent.futures
+        max_workers = max(1, os.cpu_count() // 2)
+        print(f"Starting parallel generation with {max_workers} workers (half of total threads: {os.cpu_count()})")
+
+        generated_count = 0
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(run_task, task): task for task in tasks}
+            for future in concurrent.futures.as_completed(futures):
+                success, filepath, err = future.result()
+                generated_count += 1
+                filename = os.path.basename(filepath)
+                if success:
+                    print(f"Generated {generated_count}/{total_instances} instances: {filename}")
+                else:
+                    print(f"Error {filename}: {err}")
     else:
-        generator = InstanceGenerator(seed=42, master_pool_path='data/master_pool/refined_coordinates.csv')
+        generator = InstanceGenerator(seed=42, master_pool_path=master_pool_path)
         test_config = {
             'seed': 42,
             'n': 50,

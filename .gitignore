@@ -18,8 +18,9 @@ data/postgres_data/
 __pycache__/
 *.pyc
 
-# OSRM generated graph files
+# OSRM 
 infra/osrm/graph/*.osrm*
+infra/osrm/cache/*.json
 
 # Generated datasets
 data/master_pool/*.csv
