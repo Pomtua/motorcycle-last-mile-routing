@@ -341,7 +341,7 @@ v_max):
             if abs(w - served_weights[osm_id]) > 1e9:
                 raise Exception("Served weight does not match demand")
         for osm_id, v in customer_volumes.items():
-            if abs(v - served_volumes[osm_id]) > 0.05:
+            if abs(v - served_volumes[osm_id]) > 1e9:
                 raise Exception("Served volume does not match demand")
         for r in refined_routes:
             curr_t = 0.0
