@@ -472,14 +472,39 @@ if __name__ == '__main__':
         max_workers = max(1, os.cpu_count())
         print(f"Starting parallel generation with {max_workers} workers (total threads: {os.cpu_count()})")
 
+        total_instances = len(tasks)
+        failed_instances = {}
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(run_task, task): task for task in tasks}
-            pbar = tqdm(concurrent.futures.as_completed(futures), total=len(tasks), desc="Generating instances")
+            pbar = tqdm(concurrent.futures.as_completed(futures), total=total_instances, desc="Generating instances")
             for future in pbar:
                 success, filepath, err = future.result()
                 if not success:
                     filename = os.path.basename(filepath)
+                    failed_instances[filename] = err
                     pbar.write(f"Error {filename}: {err}")
+
+        successful_count = total_instances - len(failed_instances)
+        print("\n" + "="*50)
+        print("GENERATION SUMMARY")
+        print("="*50)
+        print("Configurations Structure:")
+        print(f"  - Customer Sizes  : {len(sizes)} types {sizes}")
+        print(f"  - Spatial Layouts : {len(spatials)} types {spatials}")
+        print(f"  - Demand Profiles : {len(demands)} types {demands}")
+        print(f"  - Time Windows    : {len(tw_types)} types {[t[0] for t in tw_types]}")
+        print(f"  - Seeds per Config: {len(seeds)} (representing {len(seeds)} problem(s) each)")
+        print(f"Total Configurations  : {len(sizes) * len(spatials) * len(demands) * len(tw_types)}")
+        print(f"Expected Instances    : {total_instances}")
+        print(f"Successfully Generated: {successful_count} / {total_instances}")
+
+        if failed_instances:
+            print("\nFailed Instances Details:")
+            for filename, err in failed_instances.items():
+                print(f"  - {filename}: {err}")
+        else:
+            print("\nStatus: All instances generated successfully! (100% complete)")
+        print("="*50)
     else:
         generator = InstanceGenerator(seed=42, master_pool_path=master_pool_path)
         test_config = {
