@@ -471,7 +471,7 @@ if __name__ == '__main__':
             ('tight', 1800.0, 3600.0),
             ('loose', 5400.0, 14400.0)
         ]
-        seeds = [42]        
+        seeds = [42, 43, 44]        
         tasks = []
         for n in sizes:
             for sp in spatials:
