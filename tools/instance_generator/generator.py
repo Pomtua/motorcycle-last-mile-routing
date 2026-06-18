@@ -338,10 +338,10 @@ v_max):
             if r_v > v_max:
                 raise Exception("Route volume exceeds limit")
         for osm_id, w in customer_demands.items():
-            if abs(w - served_weights[osm_id]) > 1e9:
+            if abs(w - served_weights[osm_id]) > 1e-9:
                 raise Exception("Served weight does not match demand")
         for osm_id, v in customer_volumes.items():
-            if abs(v - served_volumes[osm_id]) > 1e9:
+            if abs(v - served_volumes[osm_id]) > 1e-9:
                 raise Exception("Served volume does not match demand")
         for r in refined_routes:
             curr_t = 0.0
