@@ -9,3 +9,5 @@ requests==2.34.2
 tqdm==4.68.2
 typing_extensions==4.15.0
 urllib3==2.7.0
+rasterio==1.4.4
+matplotlib==3.10.9

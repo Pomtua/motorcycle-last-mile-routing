@@ -2,7 +2,8 @@
 .env
 
 # Large map data and OSRM build files
-data/raw/thailand-latest.*
+data/raw/*
+!data/raw/.gitkeep
 data/postgres_data/
 
 # OS files
