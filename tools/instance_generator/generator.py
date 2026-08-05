@@ -14,6 +14,7 @@ class InstanceGenerator:
         self.pool = []
         self.pool_by_id = {}
         self.http_session = requests.Session()
+        self.pop_eps = 1.0
         self.service_times = {
             "house": 120,
             "apartments": 240,
@@ -27,12 +28,35 @@ class InstanceGenerator:
 
     def load_coordinates(self):
         with open(self.master_pool_path, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            self.pool = list(reader)
+            reader = csv.DictReader(f, skipinitialspace=True)
+            self.pool = [{k.strip(): v.strip() for k, v in r.items() if k is not None} for r in reader]
         for r in self.pool:
             r['lng'] = float(r['snapped_lng'])
             r['lat'] = float(r['snapped_lat'])
+            r['worldpop'] = float(r.get('worldpop', 0.0))
             self.pool_by_id[r['osm_id']] = r
+
+        pop_values = np.array([r['worldpop'] for r in self.pool], dtype=np.float64)
+        non_zero = pop_values[pop_values > 0]
+        min_pos = float(non_zero.min()) if len(non_zero) > 0 else 1.0
+        self.pop_eps = min_pos * 0.5
+
+    def _get_candidate_weights(self, candidates):
+        raw = np.array([c['worldpop'] for c in candidates], dtype=np.float64)
+        log_vals = np.log10(raw + self.pop_eps)
+        weights = log_vals - log_vals.min() + 1e-6
+        total = weights.sum()
+        if total <= 0:
+            return np.ones(len(candidates)) / len(candidates)
+        return weights / total
+
+    def _sample_weighted_candidates(self, candidates, n):
+        if not candidates or n <= 0:
+            return []
+        n_sample = min(n, len(candidates))
+        probs = self._get_candidate_weights(candidates)
+        indices = self.rng.choice(len(candidates), size=n_sample, replace=False, p=probs)
+        return [candidates[i] for i in indices]
 
     def select_depot(self):
         candidates = [r for r in self.pool if r['type'] in ('office', 'retail')]
@@ -50,11 +74,11 @@ class InstanceGenerator:
     def sample_customers(self, n, spatial_class, depot):
         candidates = [r for r in self.pool if r['osm_id'] != depot['osm_id']]
         if spatial_class == 'R':
-            indices = self.rng.choice(len(candidates), size=n, replace=False)
-            return [candidates[i] for i in indices]
+           return self._sample_weighted_candidates(candidates, n)
         elif spatial_class == 'C':
             s = max(1, int(math.ceil(n / 25)))
-            seed_indices = self.rng.choice(len(candidates), size=s, replace=False)
+            seed_probs = self._get_candidate_weights(candidates)
+            seed_indices = self.rng.choice(len(candidates), size=s, replace=False, p=seed_probs)
             seeds = [candidates[i] for i in seed_indices]
             clusters = [[] for _ in range(s)]
             for r in candidates:
@@ -63,7 +87,8 @@ class InstanceGenerator:
                         for idx, seed in enumerate(seeds)),
                     key=lambda x: x[1]
                 )
-                prob = math.exp(-dist / 0.05)
+                pop_log_weight = np.log10(r['worldpop'] + self.pop_eps)
+                prob = math.exp(-dist / 0.05) * pop_log_weight
                 clusters[closest_idx].append((prob, r))
             sampled = []
             per_cluster = n // s
@@ -72,21 +97,22 @@ class InstanceGenerator:
                 cluster_candidates.sort(key=lambda x: x[0], reverse=True)
                 candidates_only = [x[1] for x in cluster_candidates[:per_cluster * 3]]
                 if candidates_only:
-                    indices = self.rng.choice(len(candidates_only), size=min(len(candidates_only), per_cluster), replace=False)
-                    sampled.extend([candidates_only[i] for i in indices])
+                    sampled_from_cluster = self._sample_weighted_candidates(candidates_only, min(len(candidates_only), per_cluster))
+                    sampled.extend(sampled_from_cluster)
+
             if len(sampled) < n:
                 rem = n - len(sampled)
-                remaining_candidates = [r for r in candidates if r not in sampled]
-                indices = self.rng.choice(len(remaining_candidates), size=rem, replace=False)
-                sampled.extend([remaining_candidates[i] for i in indices])
+                sampled_ids = {r['osm_id'] for r in sampled}
+                remaining_candidates = [r for r in candidates if r['osm_id'] not in sampled_ids]
+                sampled.extend(self._sample_weighted_candidates(remaining_candidates, rem))
             return sampled[:n]
         elif spatial_class == 'RC':
             n_c = n // 2
             n_r = n - n_c
             sampled_c = self.sample_customers(n_c, 'C', depot)
-            remaining_candidates = [r for r in candidates if r not in sampled_c]
-            indices = self.rng.choice(len(remaining_candidates), size=n_r, replace=False)
-            sampled_r = [remaining_candidates[i] for i in indices]
+            sampled_c_ids = {r['osm_id'] for r in sampled_c}
+            remaining_candidates = [r for r in candidates if r['osm_id'] not in sampled_c_ids]
+            sampled_r = self._sample_weighted_candidates(remaining_candidates, n_r)
             return sampled_c + sampled_r
 
     def _clipped_normal(self, mean, std, low, high):
