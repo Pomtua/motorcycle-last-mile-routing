@@ -26,3 +26,9 @@ infra/osrm/cache/*.json
 # Generated datasets
 data/master_pool/*.csv
 data/instances/*.json
+
+# Engine
+build/
+*.o
+*.obj
+compile_commands.json
