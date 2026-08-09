@@ -4,4 +4,22 @@ project(motorcycle_router LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
+FetchContent_Declare(
+    json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+)
+FetchContent_MakeAvailable(json)
+
 message(STATUS "motorcycle_router: CMake configured OK, C++${CMAKE_CXX_STANDARD}")
+
+add_library(router_core
+    src/instance_io.cpp
+)
+target_include_directories(router_core PUBLIC include)
+target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
