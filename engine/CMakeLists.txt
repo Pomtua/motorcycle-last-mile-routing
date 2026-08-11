@@ -23,3 +23,6 @@ add_library(router_core
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
+
+add_executable(inspect_instance apps/inspect_instance.cpp)
+target_link_libraries(inspect_instance PRIVATE router_core)
