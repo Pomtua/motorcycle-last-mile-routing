@@ -1,6 +1,11 @@
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
 #include <iostream>
+#include <map>
 
 #include "router/instance_io.hpp"
+#include "router/split.hpp"
 
 int main(int argc, char **argv)
 {
@@ -35,6 +40,50 @@ int main(int argc, char **argv)
                       << ", demand_weight=" << c1.demandWeight
                       << ", tw=[" << c1.twStart << "," << c1.twEnd << "]\n";
         }
+
+        std::vector<router::Visit> visits = router::splitCustomers(inst);
+
+        int splitCustomerCount = 0;
+        int maxChunks = 1;
+        double worstWeightDrift = 0.0;
+        double worstVolumeDrift = 0.0;
+
+        std::map<int, double> weightSum, volumeSum;
+        for (const auto &v : visits)
+        {
+            weightSum[v.nodeIndex] += v.weight;
+            volumeSum[v.nodeIndex] += v.volume;
+            if (v.totalChunks > maxChunks)
+                maxChunks = v.totalChunks;
+        }
+        for (std::size_t idx = 1; idx < inst.nodes.size(); ++idx)
+        {
+            const auto &node = inst.nodes[idx];
+            if (weightSum.count(static_cast<int>(idx)) == 0)
+                continue;
+            const double wDrift = std::abs(weightSum[static_cast<int>(idx)] - node.demandWeight);
+            const double vDrift = std::abs(volumeSum[static_cast<int>(idx)] - node.demandVolume);
+            worstWeightDrift = std::max(worstWeightDrift, wDrift);
+            worstVolumeDrift = std::max(worstVolumeDrift, vDrift);
+        }
+        for (std::size_t idx = 1; idx < inst.nodes.size(); ++idx)
+        {
+            const auto &node = inst.nodes[idx];
+            const int m = std::max({1,
+                                    static_cast<int>(std::ceil(node.demandWeight / inst.fleet.weightCapacity)),
+                                    static_cast<int>(std::ceil(node.demandVolume / inst.fleet.volumeCapacity))});
+            if (m > 1)
+                splitCustomerCount++;
+        }
+
+        std::cout << "\n  --- splitCustomers() ---\n";
+        std::cout << "  total visits (chunks) = " << visits.size() << "\n";
+        std::cout << "  customers split (m>1) = " << splitCustomerCount
+                  << " / " << inst.n << "\n";
+        std::cout << "  max chunks for 1 cust  = " << maxChunks << "\n";
+        std::cout << std::setprecision(10);
+        std::cout << "  worst weight drift     = " << worstWeightDrift << "\n";
+        std::cout << "  worst volume drift     = " << worstVolumeDrift << "\n";
 
         std::cout << "OK\n";
         return 0;

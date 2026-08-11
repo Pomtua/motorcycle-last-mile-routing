@@ -20,6 +20,7 @@ message(STATUS "motorcycle_router: CMake configured OK, C++${CMAKE_CXX_STANDARD}
 
 add_library(router_core
     src/instance_io.cpp
+    src/split.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
