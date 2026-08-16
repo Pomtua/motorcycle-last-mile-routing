@@ -138,10 +138,19 @@ namespace router
                     "solution uses " + std::to_string(solution.routes.size()) +
                     " routes, exceeding fleet.size=" + std::to_string(inst.fleet.size));
             }
+
+            for (std::size_t r = 0; r < solution.routes.size(); ++r)
+            {
+                if (solution.routes[r].stops.empty())
+                {
+                    report.addViolation(
+                        "route " + std::to_string(r) +
+                        " is empty — unused vehicles must be "
+                        "omitted from the solution, not included as empty routes");
+                }
+            }
         }
-
     }
-
     ValidationReport validate(const Instance &inst, const Solution &solution)
     {
         ValidationReport report;
