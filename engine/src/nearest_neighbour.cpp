@@ -143,9 +143,10 @@ namespace router
             if (solution.routes.size() >= static_cast<std::size_t>(inst.fleet.size))
             {
                 throw std::runtime_error(
-                    "nearestNeighbour: fleet exhausted (" +
-                    std::to_string(inst.fleet.size) + " vehicles) with " +
-                    std::to_string(remaining) + " chunk(s) unserved");
+                    "nearestNeighbour: fleet exhausted -- needs at least " +
+                    std::to_string(solution.routes.size() + 1) + " vehicles, fleet has " +
+                    std::to_string(inst.fleet.size) + " (" +
+                    std::to_string(remaining) + " chunk(s) still unserved)");
             }
 
             solution.routes.push_back(std::move(route));
