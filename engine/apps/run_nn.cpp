@@ -7,6 +7,7 @@
 #include "router/cost.hpp"
 #include "router/instance_io.hpp"
 #include "router/nearest_neighbour.hpp"
+#include "router/split.hpp"
 #include "router/validate.hpp"
 
 int main(int argc, char **argv)
@@ -40,6 +41,16 @@ int main(int argc, char **argv)
         std::cout << "n              = " << inst.n << "\n";
         std::cout << "routes used    = " << sol.routes.size()
                   << " / " << inst.fleet.size << "\n";
+
+        const std::size_t chunks = router::splitCustomers(inst).size();
+        std::cout << "chunks         = " << chunks << "\n";
+        std::cout << "chunks/route   = "
+                  << (sol.routes.empty()
+                          ? 0.0
+                          : static_cast<double>(chunks) /
+                                static_cast<double>(sol.routes.size()))
+                  << "\n";
+
         std::cout << "valid          = " << (report.feasible ? "YES" : "NO") << "\n";
         if (!report.feasible)
         {

@@ -123,21 +123,11 @@ class InstanceGenerator:
         demands = []
         n = len(customers)
         for i in range(n):
-            if demand_class == 'D1':
-                w = self.rng.uniform(0.01 * w_max, 0.10 * w_max)
-            elif demand_class == 'D2':
-                w = self.rng.uniform(0.10 * w_max, 0.30 * w_max)
-            elif demand_class == 'D3':
-                w = self.rng.uniform(0.10 * w_max, 0.90 * w_max)
-            elif demand_class == 'D4':
-                w = self.rng.uniform(0.70 * w_max, 1.30 * w_max)
-            else:
-                w = self.rng.uniform(0.10 * w_max, 0.50 * w_max)
-
             category = self.rng.choice(
                 ["TEXTILE_AND_SOFT_GOODS", "CONSUMER_PACKAGED_GOODS", "DENSE_COMMODITIES"],
                 p=[0.3, 0.5, 0.2]
             )
+
             if category == "TEXTILE_AND_SOFT_GOODS":
                 rho = self._clipped_normal(120.0, 30.0, 50.0, 200.0)
             elif category == "CONSUMER_PACKAGED_GOODS":
@@ -146,6 +136,20 @@ class InstanceGenerator:
                 rho = self._clipped_normal(800.0, 150.0, 400.0, 1400.0)
 
             packing_efficiency = self.rng.uniform(0.35, 0.75)
+
+            if demand_class == 'D1':
+                phi = self.rng.uniform(0.01, 0.10)
+            elif demand_class == 'D2':
+                phi = self.rng.uniform(0.10, 0.30)
+            elif demand_class == 'D3':
+                phi = self.rng.uniform(0.10, 0.90)
+            elif demand_class == 'D4':
+                phi = self.rng.uniform(0.70, 1.30)
+            else:
+                phi = self.rng.uniform(0.10, 0.50)
+
+            c_effective = min(w_max, v_max * packing_efficiency * rho)
+            w = phi * c_effective
             vol = (w / rho) / packing_efficiency
 
             demands.append({
@@ -188,6 +192,34 @@ class InstanceGenerator:
         for i in range(remainder):
             chunks_scaled[i] += 1
         return [c / scale for c in chunks_scaled]
+
+    def split_chunks(self, w, v, w_max, v_max):
+        w_scaled = int(round(w * 100))
+        v_scaled = int(round(v * 10000))
+        w_cap = int(math.floor(w_max * 100))
+        v_cap = int(math.floor(v_max * 10000))
+
+        m = max(1, int(math.ceil(w / w_max)), int(math.ceil(v / v_max)))
+
+        while True:
+            if m == 1:
+                w_chunks, v_chunks = [w_scaled], [v_scaled]
+            else:
+                if w_cap * v_scaled <= v_cap * w_scaled:
+                    w_full = w_cap                             
+                    v_full = (v_scaled * w_cap) // w_scaled
+                else:
+                    v_full = v_cap                              
+                    w_full = (w_scaled * v_cap) // v_scaled
+
+                w_chunks = [w_full] * (m - 1) + [w_scaled - w_full * (m - 1)]
+                v_chunks = [v_full] * (m - 1) + [v_scaled - v_full * (m - 1)]
+
+            if all(c <= w_cap for c in w_chunks) and all(c <= v_cap for c in v_chunks):
+                break
+            m += 1
+
+        return m, [c / 100.0 for c in w_chunks], [c / 10000.0 for c in v_chunks]
     
     def generate_reference_routes(self, depot, customers, demands, w_max, v_max, alpha):
         locations = [depot] + customers
@@ -196,9 +228,7 @@ class InstanceGenerator:
         for d in demands:
             w = d['weight']
             v = d['volume']
-            m = max(1, int(math.ceil(w / w_max)), int(math.ceil(v / v_max)))
-            w_chunks = self.split_value(w, m, 2)
-            v_chunks = self.split_value(v, m, 4)
+            m, w_chunks, v_chunks = self.split_chunks(w, v, w_max, v_max)
             for chunk_idx in range(m):
                 visits.append({
                     'osm_id': d['osm_id'],

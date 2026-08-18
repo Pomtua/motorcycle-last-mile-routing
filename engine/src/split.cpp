@@ -8,30 +8,84 @@ namespace router
 
     namespace
     {
-        std::vector<double> splitValue(double totalVal, int m, int precision)
+        struct Chunks
         {
-            long long scale = 1;
-            for (int i = 0; i < precision; ++i)
-                scale *= 10;
+            int m = 1;
+            std::vector<double> weight;
+            std::vector<double> volume;
+        };
+        Chunks splitChunks(double w, double v, double wMax, double vMax)
+        {
+            const long long wScaled = std::llround(w * 100.0);
+            const long long vScaled = std::llround(v * 10000.0);
+            const long long wCap = static_cast<long long>(std::floor(wMax * 100.0));
+            const long long vCap = static_cast<long long>(std::floor(vMax * 10000.0));
 
-            const long long totalScaled = std::llround(totalVal * static_cast<double>(scale));
+            int m = std::max({1,
+                              static_cast<int>(std::ceil(w / wMax)),
+                              static_cast<int>(std::ceil(v / vMax))});
 
-            const long long base = totalScaled / m;
-            const long long remainder = totalScaled % m;
+            std::vector<long long> wChunks;
+            std::vector<long long> vChunks;
 
-            std::vector<long long> chunksScaled(static_cast<std::size_t>(m), base);
-            for (long long i = 0; i < remainder; ++i)
+            while (true)
             {
-                chunksScaled[static_cast<std::size_t>(i)] += 1;
+                wChunks.clear();
+                vChunks.clear();
+
+                if (m == 1)
+                {
+                    wChunks.push_back(wScaled);
+                    vChunks.push_back(vScaled);
+                }
+                else
+                {
+                    long long wFull = 0;
+                    long long vFull = 0;
+
+                    if (wCap * vScaled <= vCap * wScaled)
+                    {
+                        wFull = wCap;
+                        vFull = (vScaled * wCap) / wScaled;
+                    }
+                    else
+                    {
+                        vFull = vCap;
+                        wFull = (wScaled * vCap) / vScaled;
+                    }
+
+                    wChunks.assign(static_cast<std::size_t>(m - 1), wFull);
+                    vChunks.assign(static_cast<std::size_t>(m - 1), vFull);
+                    wChunks.push_back(wScaled - wFull * (m - 1));
+                    vChunks.push_back(vScaled - vFull * (m - 1));
+                }
+
+                bool fits = true;
+                for (std::size_t i = 0; i < wChunks.size(); ++i)
+                {
+                    if (wChunks[i] > wCap || vChunks[i] > vCap)
+                    {
+                        fits = false;
+                        break;
+                    }
+                }
+                if (fits)
+                {
+                    break;
+                }
+                ++m;
             }
 
-            std::vector<double> result(static_cast<std::size_t>(m));
-            for (int i = 0; i < m; ++i)
+            Chunks out;
+            out.m = m;
+            out.weight.reserve(wChunks.size());
+            out.volume.reserve(vChunks.size());
+            for (std::size_t i = 0; i < wChunks.size(); ++i)
             {
-                result[static_cast<std::size_t>(i)] =
-                    static_cast<double>(chunksScaled[static_cast<std::size_t>(i)]) / static_cast<double>(scale);
+                out.weight.push_back(static_cast<double>(wChunks[i]) / 100.0);
+                out.volume.push_back(static_cast<double>(vChunks[i]) / 10000.0);
             }
-            return result;
+            return out;
         }
 
     }
@@ -48,21 +102,16 @@ namespace router
         {
             const Node &node = inst.nodes[idx];
 
-            const int m = std::max({1,
-                                    static_cast<int>(std::ceil(node.demandWeight / wMax)),
-                                    static_cast<int>(std::ceil(node.demandVolume / vMax))});
+            const Chunks ch = splitChunks(node.demandWeight, node.demandVolume, wMax, vMax);
 
-            const std::vector<double> wChunks = splitValue(node.demandWeight, m, 2);
-            const std::vector<double> vChunks = splitValue(node.demandVolume, m, 4);
-
-            for (int c = 0; c < m; ++c)
+            for (int c = 0; c < ch.m; ++c)
             {
                 Visit v;
                 v.nodeIndex = idx;
                 v.chunkIdx = c;
-                v.totalChunks = m;
-                v.weight = wChunks[static_cast<std::size_t>(c)];
-                v.volume = vChunks[static_cast<std::size_t>(c)];
+                v.totalChunks = ch.m;
+                v.weight = ch.weight[static_cast<std::size_t>(c)];
+                v.volume = ch.volume[static_cast<std::size_t>(c)];
                 visits.push_back(v);
             }
         }
