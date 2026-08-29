@@ -1,6 +1,10 @@
 #include "router/local_search.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
+#include <cstdlib>
+#include <iostream>
 #include <utility>
 #include <vector>
 
@@ -12,6 +16,83 @@ namespace router
     {
         constexpr double kEpsilon = 1e-6;
         constexpr double kTimeTolerance = 1e-6;
+
+        struct MoveStats
+        {
+            double totalMs = 0.0;
+            int calls = 0;
+            int accepted = 0;
+        };
+
+        struct Profile
+        {
+            MoveStats relocate;
+            MoveStats swap;
+            MoveStats twoOptStar;
+            MoveStats eliminate;
+            long long bestInsertionCalls = 0;
+            long long eliminateTrialCopies = 0;
+        };
+
+        Profile &profile()
+        {
+            static Profile p;
+            return p;
+        }
+
+        bool profilingEnabled()
+        {
+            static const bool enabled = (std::getenv("LS_PROFILE") != nullptr);
+            return enabled;
+        }
+
+        InsertionCandidate countedBestInsertion(const Instance &inst, const Route &route,
+                                                const Visit &visit)
+        {
+            if (profilingEnabled())
+            {
+                ++profile().bestInsertionCalls;
+            }
+            return bestInsertion(inst, route, visit);
+        }
+
+        template <typename Fn>
+        bool timedTry(MoveStats &stats, Fn &&fn)
+        {
+            if (!profilingEnabled())
+            {
+                return fn();
+            }
+            const auto t0 = std::chrono::steady_clock::now();
+            const bool found = fn();
+            stats.totalMs +=
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            ++stats.calls;
+            if (found)
+            {
+                ++stats.accepted;
+            }
+            return found;
+        }
+
+        void printProfile()
+        {
+            const Profile &p = profile();
+            auto row = [](const char *name, const MoveStats &s)
+            {
+                std::cerr << name << ": calls=" << s.calls << " accepted=" << s.accepted
+                          << " totalMs=" << s.totalMs
+                          << " avgMs=" << (s.calls ? s.totalMs / s.calls : 0.0) << "\n";
+            };
+            std::cerr << "--- local search profile ---\n";
+            row("relocate ", p.relocate);
+            row("swap     ", p.swap);
+            row("2-opt*   ", p.twoOptStar);
+            row("eliminate", p.eliminate);
+            std::cerr << "bestInsertion calls:    " << p.bestInsertionCalls << "\n";
+            std::cerr << "eliminate trial copies: " << p.eliminateTrialCopies << "\n";
+        }
 
         using Stops = std::vector<Visit>;
 
@@ -147,7 +228,7 @@ namespace router
                         }
 
                         const InsertionCandidate cand =
-                            bestInsertion(inst, sol.routes[r2], chunk);
+                            countedBestInsertion(inst, sol.routes[r2], chunk);
                         if (!cand.feasible || cand.cost - gain >= -kEpsilon)
                         {
                             continue;
@@ -319,6 +400,10 @@ namespace router
             for (std::size_t r = 0; r < sol.routes.size(); ++r)
             {
                 Solution trial = sol;
+                if (profilingEnabled())
+                {
+                    ++profile().eliminateTrialCopies;
+                }
                 const Stops chunks = trial.routes[r].stops;
                 trial.routes[r].stops.clear();
 
@@ -336,7 +421,7 @@ namespace router
                         }
 
                         const InsertionCandidate cand =
-                            bestInsertion(inst, trial.routes[r2], chunk);
+                            countedBestInsertion(inst, trial.routes[r2], chunk);
                         if (!cand.feasible)
                         {
                             continue;
@@ -381,25 +466,32 @@ namespace router
 
     Solution localSearch(const Instance &inst, Solution sol)
     {
+        profile() = Profile{};
+
         while (true)
         {
-            if (tryRelocate(inst, sol))
+            if (timedTry(profile().relocate, [&] { return tryRelocate(inst, sol); }))
             {
                 continue;
             }
-            if (trySwap(inst, sol))
+            if (timedTry(profile().swap, [&] { return trySwap(inst, sol); }))
             {
                 continue;
             }
-            if (tryTwoOptStar(inst, sol))
+            if (timedTry(profile().twoOptStar, [&] { return tryTwoOptStar(inst, sol); }))
             {
                 continue;
             }
-            if (tryEliminateRoute(inst, sol))
+            if (timedTry(profile().eliminate, [&] { return tryEliminateRoute(inst, sol); }))
             {
                 continue;
             }
             break;
+        }
+
+        if (profilingEnabled())
+        {
+            printProfile();
         }
 
         return sol;
