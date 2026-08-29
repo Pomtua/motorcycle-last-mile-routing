@@ -211,92 +211,144 @@ namespace router
             return total;
         }
 
-        bool tryRelocate(const Instance &inst, Solution &sol)
+        struct ChunkRef
+        {
+            int nodeIndex = 0;
+            int chunkIdx = 0;
+        };
+
+        bool findChunk(const Solution &sol, const ChunkRef &ref,
+                       std::size_t &routeOut, std::size_t &posOut)
         {
             for (std::size_t r = 0; r < sol.routes.size(); ++r)
             {
-                for (std::size_t p = 0; p < sol.routes[r].stops.size(); ++p)
+                const Stops &stops = sol.routes[r].stops;
+                for (std::size_t p = 0; p < stops.size(); ++p)
                 {
-                    const Visit chunk = sol.routes[r].stops[p];
-                    const double gain = removalGain(inst, sol.routes[r], p);
-
-                    for (std::size_t r2 = 0; r2 < sol.routes.size(); ++r2)
+                    if (stops[p].nodeIndex == ref.nodeIndex &&
+                        stops[p].chunkIdx == ref.chunkIdx)
                     {
-                        if (r2 == r)
-                        {
-                            continue;
-                        }
-
-                        const InsertionCandidate cand =
-                            countedBestInsertion(inst, sol.routes[r2], chunk);
-                        if (!cand.feasible || cand.cost - gain >= -kEpsilon)
-                        {
-                            continue;
-                        }
-
-                        sol.routes[r].stops.erase(sol.routes[r].stops.begin() +
-                                                  static_cast<std::ptrdiff_t>(p));
-                        sol.routes[r2].stops.insert(
-                            sol.routes[r2].stops.begin() +
-                                static_cast<std::ptrdiff_t>(cand.position),
-                            chunk);
-                        dropEmptyRoutes(sol);
-                        return true;
-                    }
-
-                    Stops shortened = sol.routes[r].stops;
-                    shortened.erase(shortened.begin() + static_cast<std::ptrdiff_t>(p));
-
-                    for (std::size_t q = 0; q <= shortened.size(); ++q)
-                    {
-                        if (q == p)
-                        {
-                            continue;
-                        }
-
-                        const int prevQ = nodeBefore(shortened, q);
-                        const int nextQ = nodeAt(shortened, q);
-
-                        const double insertCost = dist(inst, prevQ, chunk.nodeIndex) +
-                                                  dist(inst, chunk.nodeIndex, nextQ) -
-                                                  dist(inst, prevQ, nextQ);
-
-                        if (insertCost - gain >= -kEpsilon)
-                        {
-                            continue;
-                        }
-
-                        Stops candidate = shortened;
-                        candidate.insert(candidate.begin() + static_cast<std::ptrdiff_t>(q),
-                                         chunk);
-
-                        if (!stopsFeasible(inst, candidate))
-                        {
-                            continue;
-                        }
-
-                        sol.routes[r].stops = std::move(candidate);
+                        routeOut = r;
+                        posOut = p;
                         return true;
                     }
                 }
             }
-
             return false;
         }
 
-        bool trySwap(const Instance &inst, Solution &sol)
+        bool relocatePass(const Instance &inst, Solution &sol)
         {
+            std::vector<ChunkRef> refs;
+            for (const Route &route : sol.routes)
+            {
+                for (const Visit &s : route.stops)
+                {
+                    refs.push_back({s.nodeIndex, s.chunkIdx});
+                }
+            }
+
+            bool improved = false;
+
+            for (const ChunkRef &ref : refs)
+            {
+                std::size_t r = 0;
+                std::size_t p = 0;
+                if (!findChunk(sol, ref, r, p))
+                {
+                    continue;
+                }
+
+                const Visit chunk = sol.routes[r].stops[p];
+                const double gain = removalGain(inst, sol.routes[r], p);
+
+                bool applied = false;
+
+                for (std::size_t r2 = 0; r2 < sol.routes.size() && !applied; ++r2)
+                {
+                    if (r2 == r)
+                    {
+                        continue;
+                    }
+
+                    const InsertionCandidate cand =
+                        countedBestInsertion(inst, sol.routes[r2], chunk);
+                    if (!cand.feasible || cand.cost - gain >= -kEpsilon)
+                    {
+                        continue;
+                    }
+
+                    sol.routes[r].stops.erase(sol.routes[r].stops.begin() +
+                                              static_cast<std::ptrdiff_t>(p));
+                    sol.routes[r2].stops.insert(
+                        sol.routes[r2].stops.begin() +
+                            static_cast<std::ptrdiff_t>(cand.position),
+                        chunk);
+                    dropEmptyRoutes(sol);
+                    applied = true;
+                }
+
+                if (applied)
+                {
+                    improved = true;
+                    continue;
+                }
+
+                Stops shortened = sol.routes[r].stops;
+                shortened.erase(shortened.begin() + static_cast<std::ptrdiff_t>(p));
+
+                for (std::size_t q = 0; q <= shortened.size(); ++q)
+                {
+                    if (q == p)
+                    {
+                        continue;
+                    }
+
+                    const int prevQ = nodeBefore(shortened, q);
+                    const int nextQ = nodeAt(shortened, q);
+
+                    const double insertCost = dist(inst, prevQ, chunk.nodeIndex) +
+                                              dist(inst, chunk.nodeIndex, nextQ) -
+                                              dist(inst, prevQ, nextQ);
+
+                    if (insertCost - gain >= -kEpsilon)
+                    {
+                        continue;
+                    }
+
+                    Stops candidate = shortened;
+                    candidate.insert(candidate.begin() + static_cast<std::ptrdiff_t>(q),
+                                     chunk);
+
+                    if (!stopsFeasible(inst, candidate))
+                    {
+                        continue;
+                    }
+
+                    sol.routes[r].stops = std::move(candidate);
+                    improved = true;
+                    break;
+                }
+            }
+
+            return improved;
+        }
+
+        bool swapPass(const Instance &inst, Solution &sol)
+        {
+            bool improved = false;
+
             for (std::size_t r1 = 0; r1 < sol.routes.size(); ++r1)
             {
                 for (std::size_t r2 = r1 + 1; r2 < sol.routes.size(); ++r2)
                 {
-                    const Stops &a = sol.routes[r1].stops;
-                    const Stops &b = sol.routes[r2].stops;
-
-                    for (std::size_t p = 0; p < a.size(); ++p)
+                    for (std::size_t p = 0; p < sol.routes[r1].stops.size(); ++p)
                     {
-                        for (std::size_t q = 0; q < b.size(); ++q)
+                        for (std::size_t q = 0; q < sol.routes[r2].stops.size(); ++q)
                         {
+                            const Stops &a = sol.routes[r1].stops;
+                            const Stops &b = sol.routes[r2].stops;
+
                             const int ap = a[p].nodeIndex;
                             const int bq = b[q].nodeIndex;
 
@@ -327,27 +379,31 @@ namespace router
 
                             sol.routes[r1].stops = std::move(newA);
                             sol.routes[r2].stops = std::move(newB);
-                            return true;
+                            improved = true;
                         }
                     }
                 }
             }
 
-            return false;
+            return improved;
         }
 
-        bool tryTwoOptStar(const Instance &inst, Solution &sol)
+        bool twoOptStarPass(const Instance &inst, Solution &sol)
         {
+            bool improved = false;
+
             for (std::size_t r1 = 0; r1 < sol.routes.size(); ++r1)
             {
                 for (std::size_t r2 = r1 + 1; r2 < sol.routes.size(); ++r2)
                 {
+                    bool appliedHere = false;
+
                     const Stops &a = sol.routes[r1].stops;
                     const Stops &b = sol.routes[r2].stops;
 
-                    for (std::size_t i = 0; i <= a.size(); ++i)
+                    for (std::size_t i = 0; i <= a.size() && !appliedHere; ++i)
                     {
-                        for (std::size_t j = 0; j <= b.size(); ++j)
+                        for (std::size_t j = 0; j <= b.size() && !appliedHere; ++j)
                         {
                             const int lastA = nodeBefore(a, i);
                             const int firstA = nodeAt(a, i);
@@ -378,17 +434,18 @@ namespace router
 
                             sol.routes[r1].stops = std::move(newA);
                             sol.routes[r2].stops = std::move(newB);
-                            dropEmptyRoutes(sol);
-                            return true;
+                            appliedHere = true;
+                            improved = true;
                         }
                     }
                 }
             }
 
-            return false;
+            dropEmptyRoutes(sol);
+            return improved;
         }
 
-        bool tryEliminateRoute(const Instance &inst, Solution &sol)
+        bool eliminatePass(const Instance &inst, Solution &sol)
         {
             if (sol.routes.size() < 2)
             {
@@ -468,25 +525,18 @@ namespace router
     {
         profile() = Profile{};
 
-        while (true)
+        bool improved = true;
+        while (improved)
         {
-            if (timedTry(profile().relocate, [&] { return tryRelocate(inst, sol); }))
-            {
-                continue;
-            }
-            if (timedTry(profile().swap, [&] { return trySwap(inst, sol); }))
-            {
-                continue;
-            }
-            if (timedTry(profile().twoOptStar, [&] { return tryTwoOptStar(inst, sol); }))
-            {
-                continue;
-            }
-            if (timedTry(profile().eliminate, [&] { return tryEliminateRoute(inst, sol); }))
-            {
-                continue;
-            }
-            break;
+            improved = false;
+            improved |= timedTry(profile().relocate,
+                                 [&] { return relocatePass(inst, sol); });
+            improved |= timedTry(profile().swap,
+                                 [&] { return swapPass(inst, sol); });
+            improved |= timedTry(profile().twoOptStar,
+                                 [&] { return twoOptStarPass(inst, sol); });
+            improved |= timedTry(profile().eliminate,
+                                 [&] { return eliminatePass(inst, sol); });
         }
 
         if (profilingEnabled())
