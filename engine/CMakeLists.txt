@@ -26,7 +26,9 @@ add_library(router_core
     src/validate.cpp
     src/cost.cpp
     src/nearest_neighbour.cpp
+    src/insertion.cpp
     src/solomon_i1.cpp
+    src/local_search.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
@@ -47,3 +49,6 @@ target_link_libraries(run_nn PRIVATE router_core nlohmann_json::nlohmann_json)
 
 add_executable(run_i1 apps/run_i1.cpp)
 target_link_libraries(run_i1 PRIVATE router_core nlohmann_json::nlohmann_json)
+
+add_executable(run_ls apps/run_ls.cpp)
+target_link_libraries(run_ls PRIVATE router_core nlohmann_json::nlohmann_json)
