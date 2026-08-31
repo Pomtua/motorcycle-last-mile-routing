@@ -97,7 +97,7 @@ namespace router
 
     }
 
-    Solution solomonI1(const Instance &inst)
+    Solution solomonI1(const Instance &inst, bool enforceFleet)
     {
         const std::vector<Visit> allVisits = splitCustomers(inst);
 
@@ -120,7 +120,7 @@ namespace router
 
             Route route = buildRoute(inst, allVisits, unserved, remaining, seedIdx);
 
-            if (solution.routes.size() >= static_cast<std::size_t>(inst.fleet.size))
+            if (enforceFleet && solution.routes.size() >= static_cast<std::size_t>(inst.fleet.size))
             {
                 throw std::runtime_error(
                     "solomonI1: fleet exhausted -- needs at least " +

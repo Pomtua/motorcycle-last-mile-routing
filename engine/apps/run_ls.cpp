@@ -24,7 +24,7 @@ int main(int argc, char **argv)
         const router::Instance inst = router::loadInstance(argv[1]);
 
         const auto t0 = std::chrono::steady_clock::now();
-        const router::Solution seed = router::solomonI1(inst);
+        const router::Solution seed = router::solomonI1(inst, false);
         const auto t1 = std::chrono::steady_clock::now();
         const router::Solution sol = router::localSearch(inst, seed);
         const auto t2 = std::chrono::steady_clock::now();

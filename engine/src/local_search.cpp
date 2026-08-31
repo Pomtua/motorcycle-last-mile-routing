@@ -452,6 +452,7 @@ namespace router
                 return false;
             }
 
+            const bool overFleet = sol.routes.size() > static_cast<std::size_t>(inst.fleet.size);
             const double before = totalDistance(inst, sol);
 
             for (std::size_t r = 0; r < sol.routes.size(); ++r)
@@ -509,7 +510,7 @@ namespace router
 
                 dropEmptyRoutes(trial);
 
-                if (totalDistance(inst, trial) - before < -kEpsilon)
+                if (overFleet || totalDistance(inst, trial) - before < -kEpsilon)
                 {
                     sol = std::move(trial);
                     return true;
