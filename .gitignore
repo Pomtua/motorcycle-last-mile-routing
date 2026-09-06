@@ -32,3 +32,4 @@ build/
 *.o
 *.obj
 compile_commands.json
+third_party/

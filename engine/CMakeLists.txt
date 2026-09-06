@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
+
+if(NOT DEFINED CMAKE_CXX_COMPILER)
+    set(CMAKE_CXX_COMPILER g++-12)
+endif()
+
 project(motorcycle_router LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -52,3 +58,14 @@ target_link_libraries(run_i1 PRIVATE router_core nlohmann_json::nlohmann_json)
 
 add_executable(run_ls apps/run_ls.cpp)
 target_link_libraries(run_ls PRIVATE router_core nlohmann_json::nlohmann_json)
+
+option(WITH_ORTOOLS "Build the OR-Tools comparison bridge (run_ortools)" OFF)
+
+if(WITH_ORTOOLS)
+    list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/third_party/ortools")
+    find_package(ortools CONFIG REQUIRED)
+
+    add_executable(run_ortools apps/run_ortools.cpp)
+    target_link_libraries(run_ortools PRIVATE router_core nlohmann_json::nlohmann_json ortools::ortools)
+    target_link_options(run_ortools PRIVATE -fuse-ld=mold)
+endif()
