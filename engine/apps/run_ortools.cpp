@@ -8,6 +8,7 @@
 #include <numeric>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -159,7 +160,21 @@ int main(int argc, char **argv)
 
     try
     {
-        const int64_t timeLimitSeconds = positionalArgs.size() >= 2 ? std::stoll(positionalArgs[1]) : 10;
+        double timeLimitSeconds = 10.0;
+        if (positionalArgs.size() >= 2)
+        {
+            std::size_t parsedChars = 0;
+            timeLimitSeconds = std::stod(positionalArgs[1], &parsedChars);
+            if (parsedChars != positionalArgs[1].size() ||
+                !std::isfinite(timeLimitSeconds) ||
+                timeLimitSeconds < 0.001 ||
+                timeLimitSeconds > 86400.0)
+            {
+                throw std::invalid_argument(
+                    "time_limit_seconds must be between 0.001 and 86400");
+            }
+        }
+        const int64_t timeLimitMs = std::llround(timeLimitSeconds * 1000.0);
         const int numZones = positionalArgs.size() >= 3 ? std::stoi(positionalArgs[2]) : 0;
         const int64_t zonePenalty = positionalArgs.size() >= 4 ? std::stoll(positionalArgs[3]) : 100000;
 
@@ -299,7 +314,9 @@ int main(int argc, char **argv)
         RoutingSearchParameters searchParameters = DefaultRoutingSearchParameters();
         searchParameters.set_first_solution_strategy(FirstSolutionStrategy::PATH_CHEAPEST_ARC);
         searchParameters.set_local_search_metaheuristic(LocalSearchMetaheuristic::GUIDED_LOCAL_SEARCH);
-        searchParameters.mutable_time_limit()->set_seconds(timeLimitSeconds);
+        searchParameters.mutable_time_limit()->set_seconds(timeLimitMs / 1000);
+        searchParameters.mutable_time_limit()->set_nanos(
+            static_cast<int32_t>((timeLimitMs % 1000) * 1000000));
 
         const auto t0 = std::chrono::steady_clock::now();
         const Assignment *solution = routing.SolveWithParameters(searchParameters);
