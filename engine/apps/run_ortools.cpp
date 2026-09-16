@@ -8,6 +8,7 @@
 #include <numeric>
 #include <random>
 #include <set>
+#include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -118,20 +119,65 @@ namespace
 
 int main(int argc, char **argv)
 {
-    if (argc < 2 || argc > 5)
+    bool rawMode = false;
+    bool splitFlag = false;
+    std::vector<std::string> positionalArgs;
+
+    for (int i = 1; i < argc; ++i)
     {
-        std::cerr << "usage: run_ortools <instance.json> [time_limit_seconds] [num_zones] [zone_penalty]\n";
+        const std::string arg = argv[i];
+        if (arg == "--raw")
+        {
+            rawMode = true;
+        }
+        else if (arg == "--split")
+        {
+            splitFlag = true;
+        }
+        else if (arg.starts_with("--"))
+        {
+            std::cerr << "unknown option: " << arg << "\n";
+            return 1;
+        }
+        else
+        {
+            positionalArgs.push_back(arg);
+        }
+    }
+
+    if (rawMode && splitFlag)
+    {
+        std::cerr << "--raw and --split cannot be used together\n";
         return 1;
     }
 
-    const int64_t timeLimitSeconds = argc >= 3 ? std::stoll(argv[2]) : 10;
-    const int numZones = argc >= 4 ? std::stoi(argv[3]) : 0;
-    const int64_t zonePenalty = argc >= 5 ? std::stoll(argv[4]) : 100000;
+    if (positionalArgs.empty() || positionalArgs.size() > 4)
+    {
+        std::cerr << "usage: run_ortools <instance.json> [time_limit_seconds] [num_zones] [zone_penalty] [--raw|--split]\n";
+        return 1;
+    }
 
     try
     {
-        const router::Instance inst = router::loadInstance(argv[1]);
-        const std::vector<router::Visit> chunks = router::splitCustomers(inst);
+        const int64_t timeLimitSeconds = positionalArgs.size() >= 2 ? std::stoll(positionalArgs[1]) : 10;
+        const int numZones = positionalArgs.size() >= 3 ? std::stoi(positionalArgs[2]) : 0;
+        const int64_t zonePenalty = positionalArgs.size() >= 4 ? std::stoll(positionalArgs[3]) : 100000;
+
+        const router::Instance inst = router::loadInstance(positionalArgs[0]);
+        std::vector<router::Visit> chunks;
+        if (rawMode)
+        {
+            chunks.reserve(static_cast<std::size_t>(inst.n));
+            for (int i = 1; i <= inst.n; ++i)
+            {
+                const router::Node &node = inst.nodes[static_cast<std::size_t>(i)];
+                chunks.push_back({i, 0, 1, node.demandWeight, node.demandVolume});
+            }
+        }
+        else
+        {
+            chunks = router::splitCustomers(inst);
+        }
         const int numChunks = static_cast<int>(chunks.size());
 
         std::vector<int> origNode(static_cast<std::size_t>(numChunks) + 1);
@@ -261,7 +307,8 @@ int main(int argc, char **argv)
         const double solveMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
         std::cout << "n              = " << inst.n << "\n";
-        std::cout << "chunks         = " << numChunks << "\n";
+        std::cout << "mode           = " << (rawMode ? "RAW" : "SPLIT") << "\n";
+        std::cout << (rawMode ? "customers      = " : "chunks         = ") << numChunks << "\n";
         std::cout << "num_zones      = " << numZones << "\n";
 
         if (solution == nullptr)
@@ -296,7 +343,7 @@ int main(int argc, char **argv)
         const router::ValidationReport report = router::validate(inst, sol);
         const double cost = router::computeCost(inst, sol);
 
-        std::ifstream f(argv[1]);
+        std::ifstream f(positionalArgs[0]);
         nlohmann::json j;
         f >> j;
         const double referenceCost = j.at("meta").at("difficulty").at("reference_cost").get<double>();
