@@ -323,6 +323,36 @@ int main(int argc, char **argv)
         const auto t1 = std::chrono::steady_clock::now();
         const double solveMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
+        std::ifstream instanceFile(positionalArgs[0]);
+        nlohmann::json instanceJson;
+        instanceFile >> instanceJson;
+        const auto &meta = instanceJson.at("meta");
+
+        nlohmann::json runResult = {
+            {"schema_version", 1},
+            {"instance", positionalArgs[0]},
+            {"spatial_class", meta.value("spatial_class", "")},
+            {"demand_class", meta.value("demand_class", "")},
+            {"size", inst.n},
+            {"seed", inst.seed},
+            {"solver", "ortools"},
+            {"mode", rawMode ? "RAW" : "SPLIT"},
+            {"num_zones", numZones},
+            {"zone_penalty", zonePenalty},
+            {"solved", solution != nullptr},
+            {"valid", nullptr},
+            {"distance_cost", nullptr},
+            {"route_count", nullptr},
+            {"reference_cost", nullptr},
+            {"reference_gap_pct", nullptr},
+            {"zone_fragmentation", nullptr},
+            {"avg_zones_per_route", nullptr},
+            {"runtime_ms", solveMs},
+            {"runtime_scope", "search_only"},
+            {"time_budget_ms", timeLimitMs},
+            {"status", static_cast<int>(routing.status())}
+        };
+
         std::cout << "n              = " << inst.n << "\n";
         std::cout << "mode           = " << (rawMode ? "RAW" : "SPLIT") << "\n";
         std::cout << (rawMode ? "customers      = " : "chunks         = ") << numChunks << "\n";
@@ -333,6 +363,7 @@ int main(int argc, char **argv)
             std::cout << "OR-Tools       = NO SOLUTION FOUND (status "
                       << static_cast<int>(routing.status()) << ")\n";
             std::cout << "solve time     = " << solveMs << " ms\n";
+            std::cout << "RESULT_JSON " << runResult.dump() << "\n";
             return 1;
         }
 
@@ -360,10 +391,9 @@ int main(int argc, char **argv)
         const router::ValidationReport report = router::validate(inst, sol);
         const double cost = router::computeCost(inst, sol);
 
-        std::ifstream f(positionalArgs[0]);
-        nlohmann::json j;
-        f >> j;
-        const double referenceCost = j.at("meta").at("difficulty").at("reference_cost").get<double>();
+        runResult["valid"] = report.feasible;
+        runResult["distance_cost"] = cost;
+        runResult["route_count"] = sol.routes.size();
 
         std::cout << "routes used    = " << sol.routes.size() << " / " << inst.fleet.size << "\n";
         std::cout << "valid          = " << (report.feasible ? "YES" : "NO") << "\n";
@@ -375,8 +405,21 @@ int main(int argc, char **argv)
             }
         }
         std::cout << "cost (OR-Tools)= " << cost << "\n";
-        std::cout << "reference_cost = " << referenceCost << "\n";
-        std::cout << "vs reference   = " << ((cost - referenceCost) / referenceCost * 100.0) << " %\n";
+
+        if (meta.contains("difficulty") &&
+            meta["difficulty"].contains("reference_cost") &&
+            meta["difficulty"]["reference_cost"].is_number())
+        {
+            const double referenceCost = meta["difficulty"]["reference_cost"].get<double>();
+            if (std::isfinite(referenceCost) && referenceCost > 0.0)
+            {
+                const double gapPct = (cost - referenceCost) / referenceCost * 100.0;
+                runResult["reference_cost"] = referenceCost;
+                runResult["reference_gap_pct"] = gapPct;
+                std::cout << "reference_cost = " << referenceCost << "\n";
+                std::cout << "vs reference   = " << gapPct << " %\n";
+            }
+        }
         std::cout << "or-tools status= " << static_cast<int>(routing.status()) << "\n";
         std::cout << "solve time     = " << solveMs << " ms\n";
 
@@ -407,8 +450,11 @@ int main(int argc, char **argv)
                           static_cast<double>(zonesTouchedPerRoute.size());
             std::cout << "zone fragment. = " << fragmentation << " (sum over zones of extra vehicles used)\n";
             std::cout << "avg zones/route= " << avgZonesPerRoute << "\n";
+            runResult["zone_fragmentation"] = fragmentation;
+            runResult["avg_zones_per_route"] = avgZonesPerRoute;
         }
 
+        std::cout << "RESULT_JSON " << runResult.dump() << "\n";
         return report.feasible ? 0 : 1;
     }
     catch (const std::exception &e)
