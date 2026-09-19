@@ -208,6 +208,8 @@ namespace router
             }
 
             totalZonesTouched += static_cast<double>(zonesInRoute.size());
+            metrics.routeZoneExcess +=
+                std::max(0, static_cast<int>(zonesInRoute.size()) - 1);
             for (const int zone : zonesInRoute)
             {
                 ++routesPerZone[zone];
@@ -227,5 +229,23 @@ namespace router
         }
 
         return metrics;
+    }
+
+    double computeRouteZoneCost(
+        const Solution &solution,
+        const std::vector<int> &zoneOf,
+        double penaltyPerExtraZone)
+    {
+        if (!std::isfinite(penaltyPerExtraZone) ||
+            penaltyPerExtraZone < 0.0)
+        {
+            throw std::invalid_argument(
+                "computeRouteZoneCost: penalty must be finite and non-negative");
+        }
+
+        const ZoneMetrics metrics =
+            measureZoneCoherence(solution, zoneOf);
+        return penaltyPerExtraZone *
+               static_cast<double>(metrics.routeZoneExcess);
     }
 }

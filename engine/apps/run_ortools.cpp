@@ -267,6 +267,7 @@ int main(int argc, char **argv)
             {"reference_cost", nullptr},
             {"reference_gap_pct", nullptr},
             {"zone_fragmentation", nullptr},
+            {"route_zone_excess", nullptr},
             {"avg_zones_per_route", nullptr},
             {"runtime_ms", solveMs},
             {"runtime_scope", "search_only"},
@@ -349,10 +350,14 @@ int main(int argc, char **argv)
                 router::measureZoneCoherence(sol, zoneOf);
             std::cout << "zone fragment. = " << zoneMetrics.fragmentation
                       << " (sum over zones of extra vehicles used)\n";
+            std::cout << "route zone excess= "
+                      << zoneMetrics.routeZoneExcess << "\n";
             std::cout << "avg zones/route= "
                       << zoneMetrics.averageZonesPerRoute << "\n";
             runResult["zone_fragmentation"] =
                 zoneMetrics.fragmentation;
+            runResult["route_zone_excess"] =
+                zoneMetrics.routeZoneExcess;
             runResult["avg_zones_per_route"] =
                 zoneMetrics.averageZonesPerRoute;
         }

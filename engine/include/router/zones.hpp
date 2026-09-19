@@ -10,6 +10,7 @@ namespace router
     struct ZoneMetrics
     {
         int fragmentation = 0;
+        int routeZoneExcess = 0;
         double averageZonesPerRoute = 0.0;
     };
 
@@ -17,4 +18,8 @@ namespace router
     ZoneMetrics measureZoneCoherence(
         const Solution &solution,
         const std::vector<int> &zoneOf);
+    double computeRouteZoneCost(
+        const Solution &solution,
+        const std::vector<int> &zoneOf,
+        double penaltyPerExtraZone);
 }
