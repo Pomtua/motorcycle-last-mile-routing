@@ -25,6 +25,7 @@
 #include "router/solution.hpp"
 #include "router/split.hpp"
 #include "router/validate.hpp"
+#include "router/zones.hpp"
 
 using operations_research::Assignment;
 using operations_research::DefaultRoutingSearchParameters;
@@ -39,83 +40,6 @@ namespace
 {
     constexpr double kWeightScale = 100.0;
     constexpr double kVolumeScale = 10000.0;
-
-    struct Point
-    {
-        double x = 0.0;
-        double y = 0.0;
-    };
-
-    std::vector<int> kMeansZones(const router::Instance &inst, int k)
-    {
-        const std::size_t n = inst.nodes.size();
-        double latSum = 0.0;
-        for (std::size_t i = 1; i < n; ++i)
-        {
-            latSum += inst.nodes[i].lat;
-        }
-        const double avgLat = latSum / static_cast<double>(n - 1);
-        const double lonScale = std::cos(avgLat * M_PI / 180.0);
-
-        std::vector<Point> pts(n);
-        for (std::size_t i = 1; i < n; ++i)
-        {
-            pts[i] = {inst.nodes[i].lng * lonScale, inst.nodes[i].lat};
-        }
-
-        std::mt19937 rng(static_cast<unsigned>(inst.seed));
-        std::vector<int> pool(n - 1);
-        std::iota(pool.begin(), pool.end(), 1);
-        std::shuffle(pool.begin(), pool.end(), rng);
-
-        std::vector<Point> centroids(static_cast<std::size_t>(k));
-        for (int c = 0; c < k; ++c)
-        {
-            centroids[static_cast<std::size_t>(c)] = pts[pool[static_cast<std::size_t>(c) % pool.size()]];
-        }
-
-        std::vector<int> assign(n, -1);
-        for (int iter = 0; iter < 25; ++iter)
-        {
-            for (std::size_t i = 1; i < n; ++i)
-            {
-                double best = 1e18;
-                int bestC = 0;
-                for (int c = 0; c < k; ++c)
-                {
-                    const double dx = pts[i].x - centroids[static_cast<std::size_t>(c)].x;
-                    const double dy = pts[i].y - centroids[static_cast<std::size_t>(c)].y;
-                    const double d = dx * dx + dy * dy;
-                    if (d < best)
-                    {
-                        best = d;
-                        bestC = c;
-                    }
-                }
-                assign[i] = bestC;
-            }
-
-            std::vector<Point> sum(static_cast<std::size_t>(k));
-            std::vector<int> count(static_cast<std::size_t>(k), 0);
-            for (std::size_t i = 1; i < n; ++i)
-            {
-                const std::size_t c = static_cast<std::size_t>(assign[i]);
-                sum[c].x += pts[i].x;
-                sum[c].y += pts[i].y;
-                ++count[c];
-            }
-            for (int c = 0; c < k; ++c)
-            {
-                if (count[static_cast<std::size_t>(c)] > 0)
-                {
-                    centroids[static_cast<std::size_t>(c)] = {
-                        sum[static_cast<std::size_t>(c)].x / count[static_cast<std::size_t>(c)],
-                        sum[static_cast<std::size_t>(c)].y / count[static_cast<std::size_t>(c)]};
-                }
-            }
-        }
-        return assign;
-    }
 }
 
 int main(int argc, char **argv)
@@ -292,7 +216,7 @@ int main(int argc, char **argv)
         std::vector<int> zoneOf;
         if (numZones > 0)
         {
-            zoneOf = kMeansZones(inst, numZones);
+            zoneOf = router::assignZones(inst, numZones);
 
             std::map<int, std::vector<int64_t>> indicesByZone;
             for (int i = 0; i < numChunks; ++i)
@@ -350,8 +274,7 @@ int main(int argc, char **argv)
             {"runtime_ms", solveMs},
             {"runtime_scope", "search_only"},
             {"time_budget_ms", timeLimitMs},
-            {"status", static_cast<int>(routing.status())}
-        };
+            {"status", static_cast<int>(routing.status())}};
 
         std::cout << "n              = " << inst.n << "\n";
         std::cout << "mode           = " << (rawMode ? "RAW" : "SPLIT") << "\n";

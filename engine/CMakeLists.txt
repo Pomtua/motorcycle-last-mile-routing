@@ -31,6 +31,7 @@ add_library(router_core
     src/solution_io.cpp
     src/validate.cpp
     src/cost.cpp
+    src/zones.cpp
     src/nearest_neighbour.cpp
     src/insertion.cpp
     src/solomon_i1.cpp
