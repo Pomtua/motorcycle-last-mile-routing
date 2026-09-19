@@ -5,9 +5,6 @@
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <numeric>
-#include <random>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -348,33 +345,16 @@ int main(int argc, char **argv)
 
         if (numZones > 0)
         {
-            std::map<int, std::set<int>> vehiclesPerZone;
-            std::vector<int> zonesTouchedPerRoute;
-            for (std::size_t r = 0; r < sol.routes.size(); ++r)
-            {
-                std::set<int> zonesHere;
-                for (const router::Visit &stop : sol.routes[r].stops)
-                {
-                    const int zone = zoneOf[static_cast<std::size_t>(stop.nodeIndex)];
-                    zonesHere.insert(zone);
-                    vehiclesPerZone[zone].insert(static_cast<int>(r));
-                }
-                zonesTouchedPerRoute.push_back(static_cast<int>(zonesHere.size()));
-            }
-            int fragmentation = 0;
-            for (const auto &[zone, vehicles] : vehiclesPerZone)
-            {
-                fragmentation += std::max(0, static_cast<int>(vehicles.size()) - 1);
-            }
-            const double avgZonesPerRoute =
-                zonesTouchedPerRoute.empty()
-                    ? 0.0
-                    : std::accumulate(zonesTouchedPerRoute.begin(), zonesTouchedPerRoute.end(), 0.0) /
-                          static_cast<double>(zonesTouchedPerRoute.size());
-            std::cout << "zone fragment. = " << fragmentation << " (sum over zones of extra vehicles used)\n";
-            std::cout << "avg zones/route= " << avgZonesPerRoute << "\n";
-            runResult["zone_fragmentation"] = fragmentation;
-            runResult["avg_zones_per_route"] = avgZonesPerRoute;
+            const router::ZoneMetrics zoneMetrics =
+                router::measureZoneCoherence(sol, zoneOf);
+            std::cout << "zone fragment. = " << zoneMetrics.fragmentation
+                      << " (sum over zones of extra vehicles used)\n";
+            std::cout << "avg zones/route= "
+                      << zoneMetrics.averageZonesPerRoute << "\n";
+            runResult["zone_fragmentation"] =
+                zoneMetrics.fragmentation;
+            runResult["avg_zones_per_route"] =
+                zoneMetrics.averageZonesPerRoute;
         }
 
         std::cout << "RESULT_JSON " << runResult.dump() << "\n";

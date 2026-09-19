@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <random>
+#include <set>
 #include <stdexcept>
 
 namespace router
@@ -179,5 +181,51 @@ namespace router
         }
 
         return zones;
+    }
+
+    ZoneMetrics measureZoneCoherence(
+        const Solution &solution,
+        const std::vector<int> &zoneOf)
+    {
+        ZoneMetrics metrics;
+        std::map<int, int> routesPerZone;
+        double totalZonesTouched = 0.0;
+
+        for (const Route &route : solution.routes)
+        {
+            std::set<int> zonesInRoute;
+            for (const Visit &stop : route.stops)
+            {
+                if (stop.nodeIndex <= 0 ||
+                    static_cast<std::size_t>(stop.nodeIndex) >= zoneOf.size() ||
+                    zoneOf[static_cast<std::size_t>(stop.nodeIndex)] < 0)
+                {
+                    throw std::invalid_argument(
+                        "measureZoneCoherence: invalid zone assignment");
+                }
+                zonesInRoute.insert(
+                    zoneOf[static_cast<std::size_t>(stop.nodeIndex)]);
+            }
+
+            totalZonesTouched += static_cast<double>(zonesInRoute.size());
+            for (const int zone : zonesInRoute)
+            {
+                ++routesPerZone[zone];
+            }
+        }
+
+        for (const auto &[zone, routeCount] : routesPerZone)
+        {
+            metrics.fragmentation += std::max(0, routeCount - 1);
+        }
+
+        if (!solution.routes.empty())
+        {
+            metrics.averageZonesPerRoute =
+                totalZonesTouched /
+                static_cast<double>(solution.routes.size());
+        }
+
+        return metrics;
     }
 }
