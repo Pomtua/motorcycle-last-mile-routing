@@ -2,6 +2,9 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -11,12 +14,14 @@
 #include "router/solomon_i1.hpp"
 #include "router/split.hpp"
 #include "router/validate.hpp"
+#include "router/zones.hpp"
 
 int main(int argc, char **argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 4)
     {
-        std::cerr << "usage: run_ls <instance.json>\n";
+        std::cerr
+            << "usage: run_ls <instance.json> [num_zones zone_penalty]\n";
         return 1;
     }
 
@@ -27,6 +32,44 @@ int main(int argc, char **argv)
     try
     {
         const router::Instance inst = router::loadInstance(argv[1]);
+
+        int numZones = 0;
+        double zonePenalty = 0.0;
+        if (argc == 4)
+        {
+            std::size_t parsedChars = 0;
+            const std::string numZonesArg = argv[2];
+            numZones = std::stoi(numZonesArg, &parsedChars);
+            if (parsedChars != numZonesArg.size() ||
+                numZones < 1 || numZones > inst.n)
+            {
+                throw std::invalid_argument(
+                    "num_zones must be between 1 and the customer count");
+            }
+
+            parsedChars = 0;
+            const std::string zonePenaltyArg = argv[3];
+            zonePenalty = std::stod(zonePenaltyArg, &parsedChars);
+            if (parsedChars != zonePenaltyArg.size() ||
+                !std::isfinite(zonePenalty) ||
+                zonePenalty < 0.0)
+            {
+                throw std::invalid_argument(
+                    "zone_penalty must be finite and non-negative");
+            }
+        }
+
+        std::vector<int> zoneOf;
+        double zonePreprocessingMs = 0.0;
+        if (numZones > 0)
+        {
+            const auto zoneStart = std::chrono::steady_clock::now();
+            zoneOf = router::assignZones(inst, numZones);
+            const auto zoneEnd = std::chrono::steady_clock::now();
+            zonePreprocessingMs =
+                std::chrono::duration<double, std::milli>(
+                    zoneEnd - zoneStart).count();
+        }
 
         std::ifstream instanceFile(argv[1]);
         nlohmann::json instanceJson;
@@ -42,8 +85,16 @@ int main(int argc, char **argv)
             {"seed", inst.seed},
             {"solver", "i1_ls"},
             {"mode", "SPLIT"},
-            {"num_zones", 0},
-            {"zone_penalty", nullptr},
+            {"num_zones", numZones},
+            {"zone_penalty", numZones > 0
+                                 ? nlohmann::json(zonePenalty)
+                                 : nlohmann::json(nullptr)},
+            {"zone_objective", numZones > 0
+                                  ? nlohmann::json("route_zone_excess")
+                                  : nlohmann::json(nullptr)},
+            {"zone_preprocessing_ms", numZones > 0
+                                         ? nlohmann::json(zonePreprocessingMs)
+                                         : nlohmann::json(nullptr)},
             {"solved", false},
             {"valid", nullptr},
             {"distance_cost", nullptr},
@@ -51,7 +102,10 @@ int main(int argc, char **argv)
             {"reference_cost", nullptr},
             {"reference_gap_pct", nullptr},
             {"zone_fragmentation", nullptr},
+            {"route_zone_excess", nullptr},
             {"avg_zones_per_route", nullptr},
+            {"route_zone_cost", nullptr},
+            {"search_score", nullptr},
             {"runtime_ms", nullptr},
             {"runtime_scope", "construction_plus_local_search"},
             {"time_budget_ms", nullptr},
@@ -64,7 +118,11 @@ int main(int argc, char **argv)
         const auto t0 = solverStart;
         const router::Solution seed = router::solomonI1(inst, false);
         const auto t1 = std::chrono::steady_clock::now();
-        const router::Solution sol = router::localSearch(inst, seed);
+        const router::Solution sol =
+            numZones > 0
+                ? router::localSearch(
+                      inst, seed, zoneOf, zonePenalty)
+                : router::localSearch(inst, seed);
         const auto t2 = std::chrono::steady_clock::now();
 
         const double constructMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -93,6 +151,38 @@ int main(int argc, char **argv)
                           : static_cast<double>(chunks) /
                                 static_cast<double>(sol.routes.size()))
                   << "\n";
+        std::cout << "num_zones      = " << numZones << "\n";
+        if (numZones > 0)
+        {
+            const router::ZoneMetrics zoneMetrics =
+                router::measureZoneCoherence(sol, zoneOf);
+            const double routeZoneCost =
+                router::computeRouteZoneCost(
+                    sol, zoneOf, zonePenalty);
+
+            runResult["zone_fragmentation"] =
+                zoneMetrics.fragmentation;
+            runResult["route_zone_excess"] =
+                zoneMetrics.routeZoneExcess;
+            runResult["avg_zones_per_route"] =
+                zoneMetrics.averageZonesPerRoute;
+            runResult["route_zone_cost"] = routeZoneCost;
+            runResult["search_score"] = cost + routeZoneCost;
+
+            std::cout << "zone_penalty   = " << zonePenalty << "\n";
+            std::cout << "zone prep time = "
+                      << zonePreprocessingMs << " ms\n";
+            std::cout << "zone fragment. = "
+                      << zoneMetrics.fragmentation << "\n";
+            std::cout << "route zone excess= "
+                      << zoneMetrics.routeZoneExcess << "\n";
+            std::cout << "avg zones/route= "
+                      << zoneMetrics.averageZonesPerRoute << "\n";
+            std::cout << "route zone cost= "
+                      << routeZoneCost << "\n";
+            std::cout << "search score   = "
+                      << (cost + routeZoneCost) << "\n";
+        }
 
         std::cout << "valid          = " << (report.feasible ? "YES" : "NO") << "\n";
         if (!report.feasible)
