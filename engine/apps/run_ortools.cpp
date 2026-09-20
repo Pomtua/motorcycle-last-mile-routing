@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -75,9 +76,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (positionalArgs.empty() || positionalArgs.size() > 4)
+    if (positionalArgs.empty() ||
+        positionalArgs.size() > 4 ||
+        positionalArgs.size() == 3)
     {
-        std::cerr << "usage: run_ortools <instance.json> [time_limit_seconds] [num_zones] [zone_penalty] [--raw|--split]\n";
+        std::cerr
+            << "usage: run_ortools <instance.json> "
+               "[time_limit_seconds [num_zones zone_penalty]] "
+               "[--raw|--split]\n";
         return 1;
     }
 
@@ -98,10 +104,45 @@ int main(int argc, char **argv)
             }
         }
         const int64_t timeLimitMs = std::llround(timeLimitSeconds * 1000.0);
-        const int numZones = positionalArgs.size() >= 3 ? std::stoi(positionalArgs[2]) : 0;
-        const int64_t zonePenalty = positionalArgs.size() >= 4 ? std::stoll(positionalArgs[3]) : 100000;
+
+        int numZones = 0;
+        int64_t zonePenalty = 0;
+        if (positionalArgs.size() == 4)
+        {
+            std::size_t parsedChars = 0;
+            numZones = std::stoi(positionalArgs[2], &parsedChars);
+            if (parsedChars != positionalArgs[2].size() ||
+                numZones < 1)
+            {
+                throw std::invalid_argument(
+                    "num_zones must be a positive integer");
+            }
+
+            parsedChars = 0;
+            zonePenalty = std::stoll(
+                positionalArgs[3], &parsedChars);
+            if (parsedChars != positionalArgs[3].size() ||
+                zonePenalty < 0)
+            {
+                throw std::invalid_argument(
+                    "zone_penalty must be a non-negative integer");
+            }
+        }
 
         const router::Instance inst = router::loadInstance(positionalArgs[0]);
+        if (numZones > inst.n)
+        {
+            throw std::invalid_argument(
+                "num_zones must not exceed the customer count");
+        }
+        if (numZones > 1 &&
+            zonePenalty >
+                std::numeric_limits<int64_t>::max() /
+                    static_cast<int64_t>(numZones - 1))
+        {
+            throw std::invalid_argument(
+                "zone_penalty is too large for num_zones");
+        }
         std::vector<router::Visit> chunks;
         if (rawMode)
         {
