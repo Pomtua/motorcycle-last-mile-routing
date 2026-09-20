@@ -213,9 +213,15 @@ int main(int argc, char **argv)
         }
 
         std::vector<int> zoneOf;
+        double zonePreprocessingMs = 0.0;
         if (numZones > 0)
         {
+            const auto zoneStart = std::chrono::steady_clock::now();
             zoneOf = router::assignZones(inst, numZones);
+            const auto zoneEnd = std::chrono::steady_clock::now();
+            zonePreprocessingMs =
+                std::chrono::duration<double, std::milli>(
+                    zoneEnd - zoneStart).count();
 
             routing.AddRouteConstraint(
                 [&](const std::vector<int64_t> &route)
@@ -275,7 +281,15 @@ int main(int argc, char **argv)
             {"solver", "ortools"},
             {"mode", rawMode ? "RAW" : "SPLIT"},
             {"num_zones", numZones},
-            {"zone_penalty", zonePenalty},
+            {"zone_penalty", numZones > 0
+                                 ? nlohmann::json(zonePenalty)
+                                 : nlohmann::json(nullptr)},
+            {"zone_objective", numZones > 0
+                                  ? nlohmann::json("route_zone_excess")
+                                  : nlohmann::json(nullptr)},
+            {"zone_preprocessing_ms", numZones > 0
+                                         ? nlohmann::json(zonePreprocessingMs)
+                                         : nlohmann::json(nullptr)},
             {"solved", solution != nullptr},
             {"valid", nullptr},
             {"distance_cost", nullptr},
@@ -285,15 +299,24 @@ int main(int argc, char **argv)
             {"zone_fragmentation", nullptr},
             {"route_zone_excess", nullptr},
             {"avg_zones_per_route", nullptr},
+            {"route_zone_cost", nullptr},
+            {"search_score", nullptr},
             {"runtime_ms", solveMs},
             {"runtime_scope", "search_only"},
             {"time_budget_ms", timeLimitMs},
-            {"status", static_cast<int>(routing.status())}};
+            {"status", static_cast<int>(routing.status())},
+            {"error", nullptr}};
 
         std::cout << "n              = " << inst.n << "\n";
         std::cout << "mode           = " << (rawMode ? "RAW" : "SPLIT") << "\n";
         std::cout << (rawMode ? "customers      = " : "chunks         = ") << numChunks << "\n";
         std::cout << "num_zones      = " << numZones << "\n";
+        if (numZones > 0)
+        {
+            std::cout << "zone_penalty   = " << zonePenalty << "\n";
+            std::cout << "zone prep time = "
+                      << zonePreprocessingMs << " ms\n";
+        }
 
         if (solution == nullptr)
         {
@@ -364,18 +387,29 @@ int main(int argc, char **argv)
         {
             const router::ZoneMetrics zoneMetrics =
                 router::measureZoneCoherence(sol, zoneOf);
+            const double routeZoneCost =
+                router::computeRouteZoneCost(
+                    sol, zoneOf, static_cast<double>(zonePenalty));
+
             std::cout << "zone fragment. = " << zoneMetrics.fragmentation
                       << " (sum over zones of extra vehicles used)\n";
             std::cout << "route zone excess= "
                       << zoneMetrics.routeZoneExcess << "\n";
             std::cout << "avg zones/route= "
                       << zoneMetrics.averageZonesPerRoute << "\n";
+            std::cout << "route zone cost= "
+                      << routeZoneCost << "\n";
+            std::cout << "search score   = "
+                      << (cost + routeZoneCost) << "\n";
+
             runResult["zone_fragmentation"] =
                 zoneMetrics.fragmentation;
             runResult["route_zone_excess"] =
                 zoneMetrics.routeZoneExcess;
             runResult["avg_zones_per_route"] =
                 zoneMetrics.averageZonesPerRoute;
+            runResult["route_zone_cost"] = routeZoneCost;
+            runResult["search_score"] = cost + routeZoneCost;
         }
 
         std::cout << "RESULT_JSON " << runResult.dump() << "\n";
