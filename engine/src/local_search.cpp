@@ -2,13 +2,17 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
+#include <set>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "router/insertion.hpp"
+#include "router/zones.hpp"
 
 namespace router
 {
@@ -129,6 +133,49 @@ namespace router
             return total + dist(inst, current, 0);
         }
 
+        struct SearchObjective
+        {
+            const std::vector<int> *zoneOf = nullptr;
+            double zonePenalty = 0.0;
+        };
+
+        bool zoneObjectiveEnabled(const SearchObjective &objective)
+        {
+            return objective.zoneOf != nullptr &&
+                   objective.zonePenalty > 0.0;
+        }
+
+        double stopsZoneCost(
+            const Stops &stops,
+            const SearchObjective &objective)
+        {
+            if (!zoneObjectiveEnabled(objective))
+            {
+                return 0.0;
+            }
+
+            std::set<int> zones;
+            for (const Visit &stop : stops)
+            {
+                if (stop.nodeIndex <= 0 ||
+                    static_cast<std::size_t>(stop.nodeIndex) >=
+                        objective.zoneOf->size() ||
+                    (*objective.zoneOf)
+                            [static_cast<std::size_t>(stop.nodeIndex)] < 0)
+                {
+                    throw std::invalid_argument(
+                        "localSearch: invalid zone assignment");
+                }
+                zones.insert(
+                    (*objective.zoneOf)
+                        [static_cast<std::size_t>(stop.nodeIndex)]);
+            }
+
+            return objective.zonePenalty *
+                   static_cast<double>(
+                       std::max(0, static_cast<int>(zones.size()) - 1));
+        }
+
         bool stopsFeasible(const Instance &inst, const Stops &stops)
         {
             double weight = 0.0;
@@ -211,6 +258,20 @@ namespace router
             return total;
         }
 
+        double totalScore(
+            const Instance &inst,
+            const Solution &sol,
+            const SearchObjective &objective)
+        {
+            double score = totalDistance(inst, sol);
+            if (objective.zoneOf != nullptr && objective.zonePenalty > 0.0)
+            {
+                score += computeRouteZoneCost(
+                    sol, *objective.zoneOf, objective.zonePenalty);
+            }
+            return score;
+        }
+
         struct ChunkRef
         {
             int nodeIndex = 0;
@@ -237,7 +298,10 @@ namespace router
             return false;
         }
 
-        bool relocatePass(const Instance &inst, Solution &sol)
+        bool relocatePass(
+            const Instance &inst,
+            Solution &sol,
+            const SearchObjective &objective)
         {
             std::vector<ChunkRef> refs;
             for (const Route &route : sol.routes)
@@ -273,17 +337,39 @@ namespace router
 
                     const InsertionCandidate cand =
                         countedBestInsertion(inst, sol.routes[r2], chunk);
-                    if (!cand.feasible || cand.cost - gain >= -kEpsilon)
+                    if (!cand.feasible)
                     {
                         continue;
                     }
 
-                    sol.routes[r].stops.erase(sol.routes[r].stops.begin() +
-                                              static_cast<std::ptrdiff_t>(p));
-                    sol.routes[r2].stops.insert(
-                        sol.routes[r2].stops.begin() +
+                    const double distanceDelta = cand.cost - gain;
+                    if (!zoneObjectiveEnabled(objective) &&
+                        distanceDelta >= -kEpsilon)
+                    {
+                        continue;
+                    }
+
+                    Stops shortened = sol.routes[r].stops;
+                    shortened.erase(
+                        shortened.begin() + static_cast<std::ptrdiff_t>(p));
+                    Stops expanded = sol.routes[r2].stops;
+                    expanded.insert(
+                        expanded.begin() +
                             static_cast<std::ptrdiff_t>(cand.position),
                         chunk);
+
+                    const double zoneDelta =
+                        stopsZoneCost(shortened, objective) +
+                        stopsZoneCost(expanded, objective) -
+                        stopsZoneCost(sol.routes[r].stops, objective) -
+                        stopsZoneCost(sol.routes[r2].stops, objective);
+                    if (distanceDelta + zoneDelta >= -kEpsilon)
+                    {
+                        continue;
+                    }
+
+                    sol.routes[r].stops = std::move(shortened);
+                    sol.routes[r2].stops = std::move(expanded);
                     dropEmptyRoutes(sol);
                     applied = true;
                 }
@@ -334,7 +420,10 @@ namespace router
             return improved;
         }
 
-        bool swapPass(const Instance &inst, Solution &sol)
+        bool swapPass(
+            const Instance &inst,
+            Solution &sol,
+            const SearchObjective &objective)
         {
             bool improved = false;
 
@@ -363,7 +452,8 @@ namespace router
                                 dist(inst, predB, ap) + dist(inst, ap, succB) -
                                 dist(inst, predB, bq) - dist(inst, bq, succB);
 
-                            if (delta >= -kEpsilon)
+                            if (!zoneObjectiveEnabled(objective) &&
+                                delta >= -kEpsilon)
                             {
                                 continue;
                             }
@@ -373,6 +463,16 @@ namespace router
                             std::swap(newA[p], newB[q]);
 
                             if (!stopsFeasible(inst, newA) || !stopsFeasible(inst, newB))
+                            {
+                                continue;
+                            }
+
+                            const double zoneDelta =
+                                stopsZoneCost(newA, objective) +
+                                stopsZoneCost(newB, objective) -
+                                stopsZoneCost(a, objective) -
+                                stopsZoneCost(b, objective);
+                            if (delta + zoneDelta >= -kEpsilon)
                             {
                                 continue;
                             }
@@ -388,7 +488,10 @@ namespace router
             return improved;
         }
 
-        bool twoOptStarPass(const Instance &inst, Solution &sol)
+        bool twoOptStarPass(
+            const Instance &inst,
+            Solution &sol,
+            const SearchObjective &objective)
         {
             bool improved = false;
 
@@ -414,7 +517,8 @@ namespace router
                                 dist(inst, lastA, firstB) + dist(inst, lastB, firstA) -
                                 dist(inst, lastA, firstA) - dist(inst, lastB, firstB);
 
-                            if (delta >= -kEpsilon)
+                            if (!zoneObjectiveEnabled(objective) &&
+                                delta >= -kEpsilon)
                             {
                                 continue;
                             }
@@ -432,6 +536,16 @@ namespace router
                                 continue;
                             }
 
+                            const double zoneDelta =
+                                stopsZoneCost(newA, objective) +
+                                stopsZoneCost(newB, objective) -
+                                stopsZoneCost(a, objective) -
+                                stopsZoneCost(b, objective);
+                            if (delta + zoneDelta >= -kEpsilon)
+                            {
+                                continue;
+                            }
+
                             sol.routes[r1].stops = std::move(newA);
                             sol.routes[r2].stops = std::move(newB);
                             appliedHere = true;
@@ -445,7 +559,10 @@ namespace router
             return improved;
         }
 
-        bool eliminatePass(const Instance &inst, Solution &sol)
+        bool eliminatePass(
+            const Instance &inst,
+            Solution &sol,
+            const SearchObjective &objective)
         {
             if (sol.routes.size() < 2)
             {
@@ -453,7 +570,7 @@ namespace router
             }
 
             const bool overFleet = sol.routes.size() > static_cast<std::size_t>(inst.fleet.size);
-            const double before = totalDistance(inst, sol);
+            const double before = totalScore(inst, sol, objective);
 
             for (std::size_t r = 0; r < sol.routes.size(); ++r)
             {
@@ -470,6 +587,7 @@ namespace router
                 {
                     std::size_t bestRoute = trial.routes.size();
                     InsertionCandidate bestCand;
+                    double bestScore = 0.0;
 
                     for (std::size_t r2 = 0; r2 < trial.routes.size(); ++r2)
                     {
@@ -484,10 +602,27 @@ namespace router
                         {
                             continue;
                         }
-                        if (bestRoute == trial.routes.size() || cand.cost < bestCand.cost)
+
+                        double candidateScore = cand.cost;
+                        if (zoneObjectiveEnabled(objective))
+                        {
+                            Stops expanded = trial.routes[r2].stops;
+                            expanded.insert(
+                                expanded.begin() +
+                                    static_cast<std::ptrdiff_t>(cand.position),
+                                chunk);
+                            candidateScore +=
+                                stopsZoneCost(expanded, objective) -
+                                stopsZoneCost(
+                                    trial.routes[r2].stops, objective);
+                        }
+
+                        if (bestRoute == trial.routes.size() ||
+                            candidateScore < bestScore)
                         {
                             bestRoute = r2;
                             bestCand = cand;
+                            bestScore = candidateScore;
                         }
                     }
 
@@ -510,7 +645,8 @@ namespace router
 
                 dropEmptyRoutes(trial);
 
-                if (overFleet || totalDistance(inst, trial) - before < -kEpsilon)
+                if (overFleet ||
+                    totalScore(inst, trial, objective) - before < -kEpsilon)
                 {
                     sol = std::move(trial);
                     return true;
@@ -520,32 +656,67 @@ namespace router
             return false;
         }
 
+        Solution runLocalSearch(
+            const Instance &inst,
+            Solution sol,
+            const SearchObjective &objective)
+        {
+            profile() = Profile{};
+
+            bool improved = true;
+            while (improved)
+            {
+                improved = false;
+                improved |= timedTry(
+                    profile().relocate,
+                    [&] { return relocatePass(inst, sol, objective); });
+                improved |= timedTry(
+                    profile().swap,
+                    [&] { return swapPass(inst, sol, objective); });
+                improved |= timedTry(
+                    profile().twoOptStar,
+                    [&] { return twoOptStarPass(inst, sol, objective); });
+                improved |= timedTry(
+                    profile().eliminate,
+                    [&] { return eliminatePass(inst, sol, objective); });
+            }
+
+            if (profilingEnabled())
+            {
+                printProfile();
+            }
+
+            return sol;
+        }
+
     }
 
     Solution localSearch(const Instance &inst, Solution sol)
     {
-        profile() = Profile{};
+        return runLocalSearch(inst, std::move(sol), SearchObjective{});
+    }
 
-        bool improved = true;
-        while (improved)
+    Solution localSearch(
+        const Instance &inst,
+        Solution sol,
+        const std::vector<int> &zoneOf,
+        double zonePenalty)
+    {
+        if (zoneOf.size() != inst.nodes.size())
         {
-            improved = false;
-            improved |= timedTry(profile().relocate,
-                                 [&] { return relocatePass(inst, sol); });
-            improved |= timedTry(profile().swap,
-                                 [&] { return swapPass(inst, sol); });
-            improved |= timedTry(profile().twoOptStar,
-                                 [&] { return twoOptStarPass(inst, sol); });
-            improved |= timedTry(profile().eliminate,
-                                 [&] { return eliminatePass(inst, sol); });
+            throw std::invalid_argument(
+                "localSearch: zone assignment size does not match instance");
+        }
+        if (!std::isfinite(zonePenalty) || zonePenalty < 0.0)
+        {
+            throw std::invalid_argument(
+                "localSearch: zone penalty must be finite and non-negative");
         }
 
-        if (profilingEnabled())
-        {
-            printProfile();
-        }
-
-        return sol;
+        return runLocalSearch(
+            inst,
+            std::move(sol),
+            SearchObjective{&zoneOf, zonePenalty});
     }
 
 }
