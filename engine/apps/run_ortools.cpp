@@ -5,8 +5,10 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -215,21 +217,35 @@ int main(int argc, char **argv)
         {
             zoneOf = router::assignZones(inst, numZones);
 
-            std::map<int, std::vector<int64_t>> indicesByZone;
-            for (int i = 0; i < numChunks; ++i)
-            {
-                const int customer = chunks[static_cast<std::size_t>(i)].nodeIndex;
-                const int zone = zoneOf[static_cast<std::size_t>(customer)];
-                const int64_t index = manager.NodeToIndex(RoutingIndexManager::NodeIndex(i + 1));
-                indicesByZone[zone].push_back(index);
-            }
-            for (auto &[zone, indices] : indicesByZone)
-            {
-                if (!indices.empty())
+            routing.AddRouteConstraint(
+                [&](const std::vector<int64_t> &route)
+                    -> std::optional<int64_t>
                 {
-                    routing.AddSoftSameVehicleConstraint(indices, zonePenalty);
-                }
-            }
+                    std::unordered_set<int> zones;
+                    for (const int64_t index : route)
+                    {
+                        const int node =
+                            manager.IndexToNode(index).value();
+                        if (node == 0)
+                        {
+                            continue;
+                        }
+
+                        const int customer =
+                            origNode[static_cast<std::size_t>(node)];
+                        zones.insert(
+                            zoneOf[static_cast<std::size_t>(customer)]);
+                    }
+
+                    if (zones.empty())
+                    {
+                        return int64_t{0};
+                    }
+
+                    return zonePenalty *
+                           static_cast<int64_t>(zones.size() - 1);
+                },
+                true);
         }
 
         RoutingSearchParameters searchParameters = DefaultRoutingSearchParameters();
