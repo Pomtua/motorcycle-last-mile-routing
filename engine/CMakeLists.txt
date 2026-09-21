@@ -76,5 +76,13 @@ if(BUILD_TESTING)
     add_executable(test_zones tests/test_zones.cpp)
     target_link_libraries(test_zones PRIVATE router_core)
 
+    add_executable(test_local_search tests/test_local_search.cpp)
+    target_link_libraries(test_local_search PRIVATE router_core)
+
     add_test(NAME zones COMMAND test_zones)
+    add_test(
+        NAME local_search
+        COMMAND test_local_search
+            "${PROJECT_SOURCE_DIR}/../data/instances/C_D1_n20_loose_s42_instance.json"
+    )
 endif()
