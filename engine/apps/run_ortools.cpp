@@ -96,14 +96,17 @@ int main(int argc, char **argv)
             timeLimitSeconds = std::stod(positionalArgs[1], &parsedChars);
             if (parsedChars != positionalArgs[1].size() ||
                 !std::isfinite(timeLimitSeconds) ||
-                timeLimitSeconds < 0.001 ||
+                timeLimitSeconds < 1e-9 ||
                 timeLimitSeconds > 86400.0)
             {
                 throw std::invalid_argument(
-                    "time_limit_seconds must be between 0.001 and 86400");
+                    "time_limit_seconds must be between 1e-9 and 86400");
             }
         }
-        const int64_t timeLimitMs = std::llround(timeLimitSeconds * 1000.0);
+        const int64_t timeLimitNs =
+            std::llround(timeLimitSeconds * 1000000000.0);
+        const double timeLimitMs =
+            static_cast<double>(timeLimitNs) / 1000000.0;
 
         int numZones = 0;
         int64_t zonePenalty = 0;
@@ -298,9 +301,10 @@ int main(int argc, char **argv)
         RoutingSearchParameters searchParameters = DefaultRoutingSearchParameters();
         searchParameters.set_first_solution_strategy(FirstSolutionStrategy::PATH_CHEAPEST_ARC);
         searchParameters.set_local_search_metaheuristic(LocalSearchMetaheuristic::GUIDED_LOCAL_SEARCH);
-        searchParameters.mutable_time_limit()->set_seconds(timeLimitMs / 1000);
+        searchParameters.mutable_time_limit()->set_seconds(
+            timeLimitNs / 1000000000);
         searchParameters.mutable_time_limit()->set_nanos(
-            static_cast<int32_t>((timeLimitMs % 1000) * 1000000));
+            static_cast<int32_t>(timeLimitNs % 1000000000));
 
         const auto t0 = std::chrono::steady_clock::now();
         const Assignment *solution = routing.SolveWithParameters(searchParameters);
