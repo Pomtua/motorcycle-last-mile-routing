@@ -10,6 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
 include(FetchContent)
 
 if(POLICY CMP0135)
@@ -69,4 +70,11 @@ if(WITH_ORTOOLS)
     add_executable(run_ortools apps/run_ortools.cpp)
     target_link_libraries(run_ortools PRIVATE router_core nlohmann_json::nlohmann_json ortools::ortools)
     target_link_options(run_ortools PRIVATE -fuse-ld=mold)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(test_zones tests/test_zones.cpp)
+    target_link_libraries(test_zones PRIVATE router_core)
+
+    add_test(NAME zones COMMAND test_zones)
 endif()
