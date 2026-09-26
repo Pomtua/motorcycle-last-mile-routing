@@ -49,9 +49,11 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--num-zones",
-        required=True,
         type=positive_int,
-        help="Number of zones for zone-aware runs"
+        help=(
+            "Override the number of zones; "
+            "defaults to the instance fleet size"
+        )
     )
     parser.add_argument(
         "--zone-penalty",
@@ -189,6 +191,35 @@ def result_runtime_ms(record: dict) -> float:
     return float(runtime)
 
 
+def instance_fleet_size(instance: Path) -> int:
+    try:
+        data = json.loads(
+            instance.read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"invalid instance JSON: {error}"
+        ) from error
+
+    fleet = data.get("fleet")
+    size = (
+        fleet.get("size")
+        if isinstance(fleet, dict)
+        else None
+    )
+
+    if (
+        isinstance(size, bool) or
+        not isinstance(size, int) or
+        size < 1
+    ):
+        raise ValueError(
+            "instance fleet.size must be a positive integer"
+        )
+
+    return size
+
+
 def ortools_budget_seconds(runtime_ms: float) -> float:
     return runtime_ms / 1000.0
 
@@ -209,6 +240,13 @@ def main() -> int:
         raise ValueError(
             f"instance does not exist: {instance}"
         )
+
+    num_zones = (
+        args.num_zones
+        if args.num_zones is not None
+        else instance_fleet_size(instance)
+    )
+
     if output.exists():
         raise ValueError(
             f"output already exists: {output}"
@@ -227,7 +265,7 @@ def main() -> int:
             )
 
     instance_arg = str(instance)
-    zones_arg = str(args.num_zones)
+    zones_arg = str(num_zones)
     penalty_arg = str(args.zone_penalty)
     total_cases = 6
 
