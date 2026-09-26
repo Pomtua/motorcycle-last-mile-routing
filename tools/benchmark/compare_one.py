@@ -29,6 +29,15 @@ def non_negative_int(value: str) -> int:
     return parsed
 
 
+def non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0.0:
+        raise argparse.ArgumentTypeError(
+            "value must be finite and non-negative"
+        )
+    return parsed
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -55,11 +64,24 @@ def parse_arguments() -> argparse.Namespace:
             "defaults to the instance fleet size"
         )
     )
-    parser.add_argument(
+    penalty_group = parser.add_mutually_exclusive_group(
+        required=True
+    )
+    penalty_group.add_argument(
+        "--penalty-alpha",
+        type=non_negative_float,
+        help=(
+            "Zone-penalty multiplier applied to the "
+            "distance-only cost per route"
+        )
+    )
+    penalty_group.add_argument(
         "--zone-penalty",
-        required=True,
         type=non_negative_int,
-        help="Penalty per extra zone on a route"
+        help=(
+            "Explicit penalty per extra zone; "
+            "intended for diagnostic overrides"
+        )
     )
     parser.add_argument(
         "--output",
@@ -102,7 +124,8 @@ def run_case(
     command: list[str],
     budget_source_case: str | None = None,
     budget_source_runtime_ms: float | None = None,
-    requested_time_limit_seconds: float | None = None
+    requested_time_limit_seconds: float | None = None,
+    zone_configuration: dict | None = None
 ) -> dict:
     completed = subprocess.run(
         command,
@@ -121,6 +144,7 @@ def run_case(
         "budget_source_runtime_ms": budget_source_runtime_ms,
         "requested_time_limit_seconds":
             requested_time_limit_seconds,
+        "zone_configuration": zone_configuration,
         "result": result,
         "result_parse_error": parse_error,
         "stdout": completed.stdout,
@@ -136,7 +160,8 @@ def write_case(
     command: list[str],
     budget_source_case: str | None = None,
     budget_source_runtime_ms: float | None = None,
-    requested_time_limit_seconds: float | None = None
+    requested_time_limit_seconds: float | None = None,
+    zone_configuration: dict | None = None
 ) -> dict:
     print(
         f"[{index}/{total}] {name}",
@@ -149,7 +174,8 @@ def write_case(
         command,
         budget_source_case,
         budget_source_runtime_ms,
-        requested_time_limit_seconds
+        requested_time_limit_seconds,
+        zone_configuration
     )
     output_file.write(
         json.dumps(
@@ -220,6 +246,33 @@ def instance_fleet_size(instance: Path) -> int:
     return size
 
 
+def result_distance_scale(record: dict) -> float:
+    result = record["result"]
+    distance = result.get("distance_cost")
+    route_count = result.get("route_count")
+
+    if (
+        isinstance(distance, bool) or
+        not isinstance(distance, (int, float)) or
+        not math.isfinite(distance) or
+        distance < 0.0
+    ):
+        raise ValueError(
+            f"{record['case']}: invalid distance_cost"
+        )
+
+    if (
+        isinstance(route_count, bool) or
+        not isinstance(route_count, int) or
+        route_count < 1
+    ):
+        raise ValueError(
+            f"{record['case']}: invalid route_count"
+        )
+
+    return float(distance) / route_count
+
+
 def ortools_budget_seconds(runtime_ms: float) -> float:
     return runtime_ms / 1000.0
 
@@ -266,7 +319,6 @@ def main() -> int:
 
     instance_arg = str(instance)
     zones_arg = str(num_zones)
-    penalty_arg = str(args.zone_penalty)
     total_cases = 6
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -296,6 +348,41 @@ def main() -> int:
         distance_runtime_ms = result_runtime_ms(
             distance_record
         )
+        distance_scale = result_distance_scale(
+            distance_record
+        )
+
+        if args.penalty_alpha is not None:
+            zone_penalty = int(
+                math.floor(
+                    args.penalty_alpha *
+                    distance_scale +
+                    0.5
+                )
+            )
+            penalty_policy = "distance_per_route"
+        else:
+            zone_penalty = args.zone_penalty
+            penalty_policy = "explicit"
+
+        penalty_arg = str(zone_penalty)
+        zone_configuration = {
+            "count_policy": (
+                "explicit"
+                if args.num_zones is not None
+                else "fleet_size"
+            ),
+            "num_zones": num_zones,
+            "penalty_policy": penalty_policy,
+            "penalty_alpha": args.penalty_alpha,
+            "distance_scale": (
+                distance_scale
+                if args.penalty_alpha is not None
+                else None
+            ),
+            "resolved_penalty": zone_penalty
+        }
+
         distance_budget_seconds = ortools_budget_seconds(
             distance_runtime_ms
         )
@@ -346,7 +433,8 @@ def main() -> int:
                 instance_arg,
                 zones_arg,
                 penalty_arg
-            ]
+            ],
+            zone_configuration=zone_configuration
         )
         zoned_runtime_ms = result_runtime_ms(
             zoned_record
@@ -374,7 +462,8 @@ def main() -> int:
             ],
             "i1_ls_zoned",
             zoned_runtime_ms,
-            zoned_budget_seconds
+            zoned_budget_seconds,
+            zone_configuration
         )
 
     print(
