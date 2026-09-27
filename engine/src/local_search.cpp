@@ -343,8 +343,20 @@ namespace router
                     }
 
                     const double distanceDelta = cand.cost - gain;
-                    if (!zoneObjectiveEnabled(objective) &&
-                        distanceDelta >= -kEpsilon)
+                    const double currentZoneCost =
+                        stopsZoneCost(
+                            sol.routes[r].stops,
+                            objective) +
+                        stopsZoneCost(
+                            sol.routes[r2].stops,
+                            objective);
+
+                    if (
+                        (!zoneObjectiveEnabled(objective) &&
+                         distanceDelta >= -kEpsilon) ||
+                        (zoneObjectiveEnabled(objective) &&
+                         distanceDelta - currentZoneCost >=
+                             -kEpsilon))
                     {
                         continue;
                     }
@@ -361,8 +373,7 @@ namespace router
                     const double zoneDelta =
                         stopsZoneCost(shortened, objective) +
                         stopsZoneCost(expanded, objective) -
-                        stopsZoneCost(sol.routes[r].stops, objective) -
-                        stopsZoneCost(sol.routes[r2].stops, objective);
+                        currentZoneCost;
                     if (distanceDelta + zoneDelta >= -kEpsilon)
                     {
                         continue;
@@ -452,8 +463,16 @@ namespace router
                                 dist(inst, predB, ap) + dist(inst, ap, succB) -
                                 dist(inst, predB, bq) - dist(inst, bq, succB);
 
-                            if (!zoneObjectiveEnabled(objective) &&
-                                delta >= -kEpsilon)
+                            const double currentZoneCost =
+                                stopsZoneCost(a, objective) +
+                                stopsZoneCost(b, objective);
+
+                            if (
+                                (!zoneObjectiveEnabled(objective) &&
+                                 delta >= -kEpsilon) ||
+                                (zoneObjectiveEnabled(objective) &&
+                                 delta - currentZoneCost >=
+                                     -kEpsilon))
                             {
                                 continue;
                             }
@@ -470,8 +489,7 @@ namespace router
                             const double zoneDelta =
                                 stopsZoneCost(newA, objective) +
                                 stopsZoneCost(newB, objective) -
-                                stopsZoneCost(a, objective) -
-                                stopsZoneCost(b, objective);
+                                currentZoneCost;
                             if (delta + zoneDelta >= -kEpsilon)
                             {
                                 continue;
@@ -517,8 +535,16 @@ namespace router
                                 dist(inst, lastA, firstB) + dist(inst, lastB, firstA) -
                                 dist(inst, lastA, firstA) - dist(inst, lastB, firstB);
 
-                            if (!zoneObjectiveEnabled(objective) &&
-                                delta >= -kEpsilon)
+                            const double currentZoneCost =
+                                stopsZoneCost(a, objective) +
+                                stopsZoneCost(b, objective);
+
+                            if (
+                                (!zoneObjectiveEnabled(objective) &&
+                                 delta >= -kEpsilon) ||
+                                (zoneObjectiveEnabled(objective) &&
+                                 delta - currentZoneCost >=
+                                     -kEpsilon))
                             {
                                 continue;
                             }
@@ -539,8 +565,7 @@ namespace router
                             const double zoneDelta =
                                 stopsZoneCost(newA, objective) +
                                 stopsZoneCost(newB, objective) -
-                                stopsZoneCost(a, objective) -
-                                stopsZoneCost(b, objective);
+                                currentZoneCost;
                             if (delta + zoneDelta >= -kEpsilon)
                             {
                                 continue;
