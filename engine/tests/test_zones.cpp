@@ -79,6 +79,42 @@ namespace
             std::move(secondRoute)};
         return solution;
     }
+
+    router::Instance makeSingleCustomerInstance()
+    {
+        router::Instance inst;
+        inst.seed = 42;
+        inst.n = 1;
+        inst.nodes.resize(2);
+        inst.nodes[1].lat = 13.0;
+        inst.nodes[1].lng = 100.0;
+        return inst;
+    }
+
+    router::Instance makeThreeClusterInstance()
+    {
+        router::Instance inst;
+        inst.seed = 42;
+        inst.n = 6;
+        inst.nodes.resize(7);
+
+        inst.nodes[1].lat = 13.000;
+        inst.nodes[1].lng = 100.000;
+        inst.nodes[2].lat = 13.001;
+        inst.nodes[2].lng = 100.001;
+
+        inst.nodes[3].lat = 14.000;
+        inst.nodes[3].lng = 101.000;
+        inst.nodes[4].lat = 14.001;
+        inst.nodes[4].lng = 101.001;
+
+        inst.nodes[5].lat = 15.000;
+        inst.nodes[5].lng = 100.000;
+        inst.nodes[6].lat = 15.001;
+        inst.nodes[6].lng = 100.001;
+
+        return inst;
+    }
 }
 
 int main()
@@ -114,6 +150,81 @@ int main()
     expect(
         firstAssignment[1] != firstAssignment[3],
         "separated customer groups must use different zones");
+
+    const router::ZoneSelection firstSelection =
+        router::selectZones(inst);
+    const router::ZoneSelection secondSelection =
+        router::selectZones(inst);
+
+    expect(
+        firstSelection.numZones == 2,
+        "silhouette selection must choose the two visible clusters");
+    expect(
+        firstSelection.candidateMaxZones == 3,
+        "candidate maximum must be capped below customer count");
+    expect(
+        firstSelection.zoneOf == firstAssignment,
+        "selected assignment must match deterministic two-zone assignment");
+    expect(
+        firstSelection.numZones == secondSelection.numZones &&
+            std::abs(
+                firstSelection.silhouetteScore -
+                secondSelection.silhouetteScore) < 1e-12 &&
+            firstSelection.zoneOf == secondSelection.zoneOf,
+        "zone selection must be deterministic");
+    expect(
+        firstSelection.silhouetteScore > 0.99 &&
+            firstSelection.silhouetteScore <= 1.0,
+        "well-separated clusters must have a strong silhouette score");
+
+    const router::ZoneSelection singleSelection =
+        router::selectZones(makeSingleCustomerInstance());
+    expect(
+        singleSelection.numZones == 1 &&
+            singleSelection.candidateMaxZones == 1,
+        "one customer must use one zone");
+    expect(
+        singleSelection.silhouetteScore == 0.0,
+        "one zone must report zero silhouette score");
+    expect(
+        singleSelection.zoneOf ==
+            std::vector<int>({-1, 0}),
+        "single customer must be assigned to zone zero");
+
+    const router::Instance threeClusterInstance =
+        makeThreeClusterInstance();
+    const router::ZoneSelection defaultThreeClusterSelection =
+        router::selectZones(threeClusterInstance);
+    const router::ZoneSelection restrictedThreeClusterSelection =
+        router::selectZones(threeClusterInstance, 2);
+
+    expect(
+        defaultThreeClusterSelection.candidateMaxZones == 4,
+        "default candidate maximum must equal floor(2 * sqrt(n))");
+    expect(
+        restrictedThreeClusterSelection.candidateMaxZones == 2,
+        "explicit candidate maximum must be retained");
+    expect(
+        defaultThreeClusterSelection.numZones == 3,
+        "default search must detect three separated clusters");
+    expect(
+        defaultThreeClusterSelection.silhouetteScore >
+            restrictedThreeClusterSelection.silhouetteScore,
+        "three separated clusters must improve silhouette score");
+
+    expectInvalidArgument(
+        [&]()
+        {
+            router::selectZones(threeClusterInstance, 1);
+        },
+        "candidate maximum below two must be rejected");
+
+    expectInvalidArgument(
+        [&]()
+        {
+            router::selectZones(threeClusterInstance, 6);
+        },
+        "candidate maximum equal to customer count must be rejected");
 
     const router::Solution solution = makeMeasuredSolution();
     const std::vector<int> zoneOf = {-1, 0, 0, 1, 1};

@@ -61,7 +61,7 @@ def parse_arguments() -> argparse.Namespace:
         type=positive_int,
         help=(
             "Override the number of zones; "
-            "defaults to the instance fleet size"
+            "defaults to automatic silhouette selection"
         )
     )
     penalty_group = parser.add_mutually_exclusive_group(
@@ -135,6 +135,22 @@ def run_case(
     )
     result, parse_error = parse_result(completed.stdout)
 
+    resolved_zone_configuration = zone_configuration
+    if zone_configuration is not None:
+        resolved_zone_configuration = dict(
+            zone_configuration
+        )
+        if result is not None:
+            resolved_zone_configuration.update({
+                "num_zones": result.get("num_zones"),
+                "candidate_max": result.get(
+                    "zone_candidate_max"
+                ),
+                "silhouette_score": result.get(
+                    "zone_silhouette_score"
+                )
+            })
+
     return {
         "benchmark_schema_version": 1,
         "case": name,
@@ -144,7 +160,7 @@ def run_case(
         "budget_source_runtime_ms": budget_source_runtime_ms,
         "requested_time_limit_seconds":
             requested_time_limit_seconds,
-        "zone_configuration": zone_configuration,
+        "zone_configuration": resolved_zone_configuration,
         "result": result,
         "result_parse_error": parse_error,
         "stdout": completed.stdout,
@@ -217,35 +233,6 @@ def result_runtime_ms(record: dict) -> float:
     return float(runtime)
 
 
-def instance_fleet_size(instance: Path) -> int:
-    try:
-        data = json.loads(
-            instance.read_text(encoding="utf-8")
-        )
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            f"invalid instance JSON: {error}"
-        ) from error
-
-    fleet = data.get("fleet")
-    size = (
-        fleet.get("size")
-        if isinstance(fleet, dict)
-        else None
-    )
-
-    if (
-        isinstance(size, bool) or
-        not isinstance(size, int) or
-        size < 1
-    ):
-        raise ValueError(
-            "instance fleet.size must be a positive integer"
-        )
-
-    return size
-
-
 def result_distance_scale(record: dict) -> float:
     result = record["result"]
     distance = result.get("distance_cost")
@@ -294,12 +281,6 @@ def main() -> int:
             f"instance does not exist: {instance}"
         )
 
-    num_zones = (
-        args.num_zones
-        if args.num_zones is not None
-        else instance_fleet_size(instance)
-    )
-
     if output.exists():
         raise ValueError(
             f"output already exists: {output}"
@@ -318,7 +299,11 @@ def main() -> int:
             )
 
     instance_arg = str(instance)
-    zones_arg = str(num_zones)
+    zones_arg = (
+        str(args.num_zones)
+        if args.num_zones is not None
+        else "auto"
+    )
     total_cases = 6
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -370,9 +355,9 @@ def main() -> int:
             "count_policy": (
                 "explicit"
                 if args.num_zones is not None
-                else "fleet_size"
+                else "silhouette_2sqrt_n"
             ),
-            "num_zones": num_zones,
+            "requested_num_zones": args.num_zones,
             "penalty_policy": penalty_policy,
             "penalty_alpha": args.penalty_alpha,
             "distance_scale": (
@@ -447,7 +432,7 @@ def main() -> int:
             ".17g"
         )
 
-        write_case(
+        ortools_zoned_record = write_case(
             output_file,
             6,
             total_cases,
@@ -465,6 +450,22 @@ def main() -> int:
             zoned_budget_seconds,
             zone_configuration
         )
+
+        selection_fields = (
+            "num_zones",
+            "zone_count_policy",
+            "zone_candidate_max",
+            "zone_silhouette_score"
+        )
+        for field in selection_fields:
+            if (
+                zoned_record["result"].get(field) !=
+                ortools_zoned_record["result"].get(field)
+            ):
+                raise ValueError(
+                    "zoned solvers used different zone "
+                    f"selection metadata: {field}"
+                )
 
     print(
         f"Wrote {total_cases} records to {output}",

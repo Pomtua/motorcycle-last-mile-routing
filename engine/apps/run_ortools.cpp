@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -82,7 +83,7 @@ int main(int argc, char **argv)
     {
         std::cerr
             << "usage: run_ortools <instance.json> "
-               "[time_limit_seconds [num_zones zone_penalty]] "
+               "[time_limit_seconds [num_zones|auto zone_penalty]] "
                "[--raw|--split]\n";
         return 1;
     }
@@ -108,17 +109,30 @@ int main(int argc, char **argv)
         const double timeLimitMs =
             static_cast<double>(timeLimitNs) / 1000000.0;
 
+        const bool zoningEnabled =
+            positionalArgs.size() == 4;
+        bool automaticZones = false;
         int numZones = 0;
+        int candidateMaxZones = 0;
+        double silhouetteScore = 0.0;
         int64_t zonePenalty = 0;
-        if (positionalArgs.size() == 4)
+        if (zoningEnabled)
         {
             std::size_t parsedChars = 0;
-            numZones = std::stoi(positionalArgs[2], &parsedChars);
-            if (parsedChars != positionalArgs[2].size() ||
-                numZones < 1)
+            if (positionalArgs[2] == "auto")
             {
-                throw std::invalid_argument(
-                    "num_zones must be a positive integer");
+                automaticZones = true;
+            }
+            else
+            {
+                numZones =
+                    std::stoi(positionalArgs[2], &parsedChars);
+                if (parsedChars != positionalArgs[2].size() ||
+                    numZones < 1)
+                {
+                    throw std::invalid_argument(
+                        "num_zones must be 'auto' or a positive integer");
+                }
             }
 
             parsedChars = 0;
@@ -133,19 +147,14 @@ int main(int argc, char **argv)
         }
 
         const router::Instance inst = router::loadInstance(positionalArgs[0]);
-        if (numZones > inst.n)
+        if (zoningEnabled &&
+            !automaticZones &&
+            numZones > inst.n)
         {
             throw std::invalid_argument(
                 "num_zones must not exceed the customer count");
         }
-        if (numZones > 1 &&
-            zonePenalty >
-                std::numeric_limits<int64_t>::max() /
-                    static_cast<int64_t>(numZones - 1))
-        {
-            throw std::invalid_argument(
-                "zone_penalty is too large for num_zones");
-        }
+
         std::vector<router::Visit> chunks;
         if (rawMode)
         {
@@ -258,14 +267,37 @@ int main(int argc, char **argv)
 
         std::vector<int> zoneOf;
         double zonePreprocessingMs = 0.0;
-        if (numZones > 0)
+        if (zoningEnabled)
         {
             const auto zoneStart = std::chrono::steady_clock::now();
-            zoneOf = router::assignZones(inst, numZones);
+            if (automaticZones)
+            {
+                router::ZoneSelection selection =
+                    router::selectZones(inst);
+                numZones = selection.numZones;
+                candidateMaxZones =
+                    selection.candidateMaxZones;
+                silhouetteScore =
+                    selection.silhouetteScore;
+                zoneOf = std::move(selection.zoneOf);
+            }
+            else
+            {
+                zoneOf = router::assignZones(inst, numZones);
+            }
             const auto zoneEnd = std::chrono::steady_clock::now();
             zonePreprocessingMs =
                 std::chrono::duration<double, std::milli>(
                     zoneEnd - zoneStart).count();
+
+            if (numZones > 1 &&
+                zonePenalty >
+                    std::numeric_limits<int64_t>::max() /
+                        static_cast<int64_t>(numZones - 1))
+            {
+                throw std::invalid_argument(
+                    "zone_penalty is too large for num_zones");
+            }
 
             routing.AddRouteConstraint(
                 [&](const std::vector<int64_t> &route)
@@ -326,13 +358,28 @@ int main(int argc, char **argv)
             {"solver", "ortools"},
             {"mode", rawMode ? "RAW" : "SPLIT"},
             {"num_zones", numZones},
-            {"zone_penalty", numZones > 0
+            {"zone_count_policy",
+             zoningEnabled
+                 ? nlohmann::json(
+                       automaticZones
+                           ? "silhouette_2sqrt_n"
+                           : "explicit")
+                 : nlohmann::json(nullptr)},
+            {"zone_candidate_max",
+             automaticZones
+                 ? nlohmann::json(candidateMaxZones)
+                 : nlohmann::json(nullptr)},
+            {"zone_silhouette_score",
+             automaticZones
+                 ? nlohmann::json(silhouetteScore)
+                 : nlohmann::json(nullptr)},
+            {"zone_penalty", zoningEnabled
                                  ? nlohmann::json(zonePenalty)
                                  : nlohmann::json(nullptr)},
-            {"zone_objective", numZones > 0
+            {"zone_objective", zoningEnabled
                                   ? nlohmann::json("route_zone_excess")
                                   : nlohmann::json(nullptr)},
-            {"zone_preprocessing_ms", numZones > 0
+            {"zone_preprocessing_ms", zoningEnabled
                                          ? nlohmann::json(zonePreprocessingMs)
                                          : nlohmann::json(nullptr)},
             {"solved", solution != nullptr},
@@ -356,8 +403,20 @@ int main(int argc, char **argv)
         std::cout << "mode           = " << (rawMode ? "RAW" : "SPLIT") << "\n";
         std::cout << (rawMode ? "customers      = " : "chunks         = ") << numChunks << "\n";
         std::cout << "num_zones      = " << numZones << "\n";
-        if (numZones > 0)
+        if (zoningEnabled)
         {
+            std::cout << "zone policy    = "
+                      << (automaticZones
+                              ? "silhouette_2sqrt_n"
+                              : "explicit")
+                      << "\n";
+            if (automaticZones)
+            {
+                std::cout << "candidate max  = "
+                          << candidateMaxZones << "\n";
+                std::cout << "silhouette     = "
+                          << silhouetteScore << "\n";
+            }
             std::cout << "zone_penalty   = " << zonePenalty << "\n";
             std::cout << "zone prep time = "
                       << zonePreprocessingMs << " ms\n";
@@ -428,7 +487,7 @@ int main(int argc, char **argv)
         std::cout << "or-tools status= " << static_cast<int>(routing.status()) << "\n";
         std::cout << "solve time     = " << solveMs << " ms\n";
 
-        if (numZones > 0)
+        if (zoningEnabled)
         {
             const router::ZoneMetrics zoneMetrics =
                 router::measureZoneCoherence(sol, zoneOf);

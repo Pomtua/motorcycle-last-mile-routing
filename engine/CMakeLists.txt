@@ -52,6 +52,9 @@ target_link_libraries(validate_solution PRIVATE router_core)
 add_executable(compute_cost apps/compute_cost.cpp)
 target_link_libraries(compute_cost PRIVATE router_core nlohmann_json::nlohmann_json)
 
+add_executable(inspect_zones apps/inspect_zones.cpp)
+target_link_libraries(inspect_zones PRIVATE router_core nlohmann_json::nlohmann_json)
+
 add_executable(run_nn apps/run_nn.cpp)
 target_link_libraries(run_nn PRIVATE router_core nlohmann_json::nlohmann_json)
 
@@ -84,5 +87,6 @@ if(BUILD_TESTING)
         NAME local_search
         COMMAND test_local_search
             "${PROJECT_SOURCE_DIR}/../data/instances/C_D1_n20_loose_s42_instance.json"
+            "${PROJECT_SOURCE_DIR}/../data/instances/R_D1_n100_tight_s42_instance.json"
     )
 endif()

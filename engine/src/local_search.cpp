@@ -693,7 +693,21 @@ namespace router
 
     Solution localSearch(const Instance &inst, Solution sol)
     {
-        return runLocalSearch(inst, std::move(sol), SearchObjective{});
+        Solution result =
+            runLocalSearch(
+                inst,
+                std::move(sol),
+                SearchObjective{});
+
+        if (result.routes.size() >
+            static_cast<std::size_t>(inst.fleet.size))
+        {
+            throw std::runtime_error(
+                "localSearch: distance search cannot reduce "
+                "the solution to the available fleet size");
+        }
+
+        return result;
     }
 
     Solution localSearch(
@@ -713,10 +727,37 @@ namespace router
                 "localSearch: zone penalty must be finite and non-negative");
         }
 
-        return runLocalSearch(
+        if (sol.routes.size() >
+            static_cast<std::size_t>(inst.fleet.size))
+        {
+            sol = runLocalSearch(
+                inst,
+                std::move(sol),
+                SearchObjective{});
+
+            if (sol.routes.size() >
+                static_cast<std::size_t>(inst.fleet.size))
+            {
+                throw std::runtime_error(
+                    "localSearch: distance search cannot reduce "
+                    "the solution to the available fleet size");
+            }
+        }
+
+        Solution result = runLocalSearch(
             inst,
             std::move(sol),
             SearchObjective{&zoneOf, zonePenalty});
+
+        if (result.routes.size() >
+            static_cast<std::size_t>(inst.fleet.size))
+        {
+            throw std::runtime_error(
+                "localSearch: zone search exceeded the "
+                "available fleet size");
+        }
+
+        return result;
     }
 
 }

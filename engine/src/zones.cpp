@@ -25,6 +25,136 @@ namespace router
             const double dy = a.y - b.y;
             return dx * dx + dy * dy;
         }
+
+        std::vector<Point> projectCustomers(const Instance &inst)
+        {
+            double meanLatitude = 0.0;
+            for (int i = 1; i <= inst.n; ++i)
+            {
+                const Node &node =
+                    inst.nodes[static_cast<std::size_t>(i)];
+                if (!std::isfinite(node.lat) ||
+                    !std::isfinite(node.lng))
+                {
+                    throw std::invalid_argument(
+                        "zones: non-finite customer coordinate");
+                }
+                meanLatitude += node.lat;
+            }
+            meanLatitude /= inst.n;
+
+            const double longitudeScale =
+                std::cos(
+                    meanLatitude *
+                    std::numbers::pi_v<double> /
+                    180.0);
+
+            std::vector<Point> points(
+                static_cast<std::size_t>(inst.n) + 1);
+            for (int i = 1; i <= inst.n; ++i)
+            {
+                const Node &node =
+                    inst.nodes[static_cast<std::size_t>(i)];
+                points[static_cast<std::size_t>(i)] = {
+                    node.lng * longitudeScale,
+                    node.lat};
+            }
+            return points;
+        }
+
+        double averageSilhouette(
+            const std::vector<Point> &points,
+            const std::vector<int> &zoneOf,
+            int numZones)
+        {
+            const int customerCount =
+                static_cast<int>(points.size()) - 1;
+            std::vector<int> zoneSizes(
+                static_cast<std::size_t>(numZones), 0);
+
+            for (int i = 1; i <= customerCount; ++i)
+            {
+                const int zone =
+                    zoneOf[static_cast<std::size_t>(i)];
+                if (zone < 0 || zone >= numZones)
+                {
+                    throw std::invalid_argument(
+                        "averageSilhouette: invalid zone assignment");
+                }
+                ++zoneSizes[static_cast<std::size_t>(zone)];
+            }
+
+            double totalScore = 0.0;
+            for (int i = 1; i <= customerCount; ++i)
+            {
+                const int ownZone =
+                    zoneOf[static_cast<std::size_t>(i)];
+
+                if (zoneSizes[static_cast<std::size_t>(ownZone)] == 1)
+                {
+                    continue;
+                }
+
+                std::vector<double> distanceSums(
+                    static_cast<std::size_t>(numZones), 0.0);
+                for (int j = 1; j <= customerCount; ++j)
+                {
+                    if (i == j)
+                    {
+                        continue;
+                    }
+
+                    const int otherZone =
+                        zoneOf[static_cast<std::size_t>(j)];
+                    distanceSums[static_cast<std::size_t>(otherZone)] +=
+                        std::sqrt(
+                            distanceSquared(
+                                points[static_cast<std::size_t>(i)],
+                                points[static_cast<std::size_t>(j)]));
+                }
+
+                const double withinMean =
+                    distanceSums[static_cast<std::size_t>(ownZone)] /
+                    static_cast<double>(
+                        zoneSizes[static_cast<std::size_t>(ownZone)] -
+                        1);
+
+                double nearestOtherMean =
+                    std::numeric_limits<double>::infinity();
+                for (int zone = 0; zone < numZones; ++zone)
+                {
+                    if (zone == ownZone ||
+                        zoneSizes[static_cast<std::size_t>(zone)] == 0)
+                    {
+                        continue;
+                    }
+
+                    nearestOtherMean = std::min(
+                        nearestOtherMean,
+                        distanceSums[static_cast<std::size_t>(zone)] /
+                            static_cast<double>(
+                                zoneSizes[static_cast<std::size_t>(zone)]));
+                }
+
+                if (!std::isfinite(nearestOtherMean))
+                {
+                    throw std::runtime_error(
+                        "averageSilhouette: no other zone");
+                }
+
+                const double denominator =
+                    std::max(withinMean, nearestOtherMean);
+                if (denominator > 0.0)
+                {
+                    totalScore +=
+                        (nearestOtherMean - withinMean) /
+                        denominator;
+                }
+            }
+
+            return totalScore /
+                   static_cast<double>(customerCount);
+        }
     }
 
     std::vector<int> assignZones(const Instance &inst, int numZones)
@@ -36,27 +166,8 @@ namespace router
             throw std::invalid_argument("assignZones: invalid instance size or zone count");
         }
 
-        double meanLatitude = 0.0;
-        for (int i = 1; i <= inst.n; ++i)
-        {
-            const Node &node = inst.nodes[static_cast<std::size_t>(i)];
-            if (!std::isfinite(node.lat) || !std::isfinite(node.lng))
-            {
-                throw std::invalid_argument("assignZones: non-finite customer coordinate");
-            }
-            meanLatitude += node.lat;
-        }
-        meanLatitude /= inst.n;
-
-        const double longitudeScale =
-            std::cos(meanLatitude * std::numbers::pi_v<double> / 180.0);
-        std::vector<Point> points(static_cast<std::size_t>(inst.n) + 1);
-        for (int i = 1; i <= inst.n; ++i)
-        {
-            const Node &node = inst.nodes[static_cast<std::size_t>(i)];
-            points[static_cast<std::size_t>(i)] =
-                {node.lng * longitudeScale, node.lat};
-        }
+        const std::vector<Point> points =
+            projectCustomers(inst);
 
         std::mt19937 rng(static_cast<unsigned>(inst.seed));
         std::uniform_int_distribution<int> firstCustomer(1, inst.n);
@@ -181,6 +292,101 @@ namespace router
         }
 
         return zones;
+    }
+
+    ZoneSelection selectZones(const Instance &inst)
+    {
+        if (inst.n <= 0 ||
+            inst.nodes.size() != static_cast<std::size_t>(inst.n) + 1)
+        {
+            throw std::invalid_argument(
+                "selectZones: invalid instance size");
+        }
+
+        if (inst.n <= 2)
+        {
+            return selectZones(inst, 1);
+        }
+
+        const int candidateMaxZones = std::min(
+            inst.n - 1,
+            std::max(
+                2,
+                static_cast<int>(
+                    std::floor(
+                        2.0 *
+                        std::sqrt(
+                            static_cast<double>(inst.n))))));
+
+        return selectZones(inst, candidateMaxZones);
+    }
+
+    ZoneSelection selectZones(
+        const Instance &inst,
+        int candidateMaxZones)
+    {
+        if (inst.n <= 0 ||
+            inst.nodes.size() != static_cast<std::size_t>(inst.n) + 1)
+        {
+            throw std::invalid_argument(
+                "selectZones: invalid instance size");
+        }
+
+        if (inst.n <= 2)
+        {
+            if (candidateMaxZones != 1)
+            {
+                throw std::invalid_argument(
+                    "selectZones: candidate maximum must be 1 "
+                    "for at most two customers");
+            }
+
+            return {
+                1,
+                1,
+                0.0,
+                assignZones(inst, 1)};
+        }
+
+        if (candidateMaxZones < 2 ||
+            candidateMaxZones >= inst.n)
+        {
+            throw std::invalid_argument(
+                "selectZones: candidate maximum must be between "
+                "2 and one less than the customer count");
+        }
+
+        const std::vector<Point> points =
+            projectCustomers(inst);
+
+        ZoneSelection best;
+        best.candidateMaxZones = candidateMaxZones;
+
+        constexpr double tieTolerance = 1e-12;
+        for (int numZones = 2;
+             numZones <= candidateMaxZones;
+             ++numZones)
+        {
+            std::vector<int> zoneOf =
+                assignZones(inst, numZones);
+            const double score =
+                averageSilhouette(
+                    points,
+                    zoneOf,
+                    numZones);
+
+            if (best.numZones == 0 ||
+                score >
+                    best.silhouetteScore +
+                        tieTolerance)
+            {
+                best.numZones = numZones;
+                best.silhouetteScore = score;
+                best.zoneOf = std::move(zoneOf);
+            }
+        }
+
+        return best;
     }
 
     ZoneMetrics measureZoneCoherence(

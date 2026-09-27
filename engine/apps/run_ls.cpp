@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -21,7 +22,8 @@ int main(int argc, char **argv)
     if (argc != 2 && argc != 4)
     {
         std::cerr
-            << "usage: run_ls <instance.json> [num_zones zone_penalty]\n";
+            << "usage: run_ls <instance.json> "
+               "[num_zones|auto zone_penalty]\n";
         return 1;
     }
 
@@ -33,18 +35,30 @@ int main(int argc, char **argv)
     {
         const router::Instance inst = router::loadInstance(argv[1]);
 
+        const bool zoningEnabled = argc == 4;
+        bool automaticZones = false;
         int numZones = 0;
+        int candidateMaxZones = 0;
+        double silhouetteScore = 0.0;
         double zonePenalty = 0.0;
-        if (argc == 4)
+        if (zoningEnabled)
         {
             std::size_t parsedChars = 0;
             const std::string numZonesArg = argv[2];
-            numZones = std::stoi(numZonesArg, &parsedChars);
-            if (parsedChars != numZonesArg.size() ||
-                numZones < 1 || numZones > inst.n)
+            if (numZonesArg == "auto")
             {
-                throw std::invalid_argument(
-                    "num_zones must be between 1 and the customer count");
+                automaticZones = true;
+            }
+            else
+            {
+                numZones = std::stoi(numZonesArg, &parsedChars);
+                if (parsedChars != numZonesArg.size() ||
+                    numZones < 1 || numZones > inst.n)
+                {
+                    throw std::invalid_argument(
+                        "num_zones must be 'auto' or between 1 "
+                        "and the customer count");
+                }
             }
 
             parsedChars = 0;
@@ -61,10 +75,24 @@ int main(int argc, char **argv)
 
         std::vector<int> zoneOf;
         double zonePreprocessingMs = 0.0;
-        if (numZones > 0)
+        if (zoningEnabled)
         {
             const auto zoneStart = std::chrono::steady_clock::now();
-            zoneOf = router::assignZones(inst, numZones);
+            if (automaticZones)
+            {
+                router::ZoneSelection selection =
+                    router::selectZones(inst);
+                numZones = selection.numZones;
+                candidateMaxZones =
+                    selection.candidateMaxZones;
+                silhouetteScore =
+                    selection.silhouetteScore;
+                zoneOf = std::move(selection.zoneOf);
+            }
+            else
+            {
+                zoneOf = router::assignZones(inst, numZones);
+            }
             const auto zoneEnd = std::chrono::steady_clock::now();
             zonePreprocessingMs =
                 std::chrono::duration<double, std::milli>(
@@ -86,13 +114,28 @@ int main(int argc, char **argv)
             {"solver", "i1_ls"},
             {"mode", "SPLIT"},
             {"num_zones", numZones},
-            {"zone_penalty", numZones > 0
+            {"zone_count_policy",
+             zoningEnabled
+                 ? nlohmann::json(
+                       automaticZones
+                           ? "silhouette_2sqrt_n"
+                           : "explicit")
+                 : nlohmann::json(nullptr)},
+            {"zone_candidate_max",
+             automaticZones
+                 ? nlohmann::json(candidateMaxZones)
+                 : nlohmann::json(nullptr)},
+            {"zone_silhouette_score",
+             automaticZones
+                 ? nlohmann::json(silhouetteScore)
+                 : nlohmann::json(nullptr)},
+            {"zone_penalty", zoningEnabled
                                  ? nlohmann::json(zonePenalty)
                                  : nlohmann::json(nullptr)},
-            {"zone_objective", numZones > 0
+            {"zone_objective", zoningEnabled
                                   ? nlohmann::json("route_zone_excess")
                                   : nlohmann::json(nullptr)},
-            {"zone_preprocessing_ms", numZones > 0
+            {"zone_preprocessing_ms", zoningEnabled
                                          ? nlohmann::json(zonePreprocessingMs)
                                          : nlohmann::json(nullptr)},
             {"solved", false},
@@ -119,7 +162,7 @@ int main(int argc, char **argv)
         const router::Solution seed = router::solomonI1(inst, false);
         const auto t1 = std::chrono::steady_clock::now();
         const router::Solution sol =
-            numZones > 0
+            zoningEnabled
                 ? router::localSearch(
                       inst, seed, zoneOf, zonePenalty)
                 : router::localSearch(inst, seed);
@@ -152,7 +195,7 @@ int main(int argc, char **argv)
                                 static_cast<double>(sol.routes.size()))
                   << "\n";
         std::cout << "num_zones      = " << numZones << "\n";
-        if (numZones > 0)
+        if (zoningEnabled)
         {
             const router::ZoneMetrics zoneMetrics =
                 router::measureZoneCoherence(sol, zoneOf);
@@ -169,6 +212,18 @@ int main(int argc, char **argv)
             runResult["route_zone_cost"] = routeZoneCost;
             runResult["search_score"] = cost + routeZoneCost;
 
+            std::cout << "zone policy    = "
+                      << (automaticZones
+                              ? "silhouette_2sqrt_n"
+                              : "explicit")
+                      << "\n";
+            if (automaticZones)
+            {
+                std::cout << "candidate max  = "
+                          << candidateMaxZones << "\n";
+                std::cout << "silhouette     = "
+                          << silhouetteScore << "\n";
+            }
             std::cout << "zone_penalty   = " << zonePenalty << "\n";
             std::cout << "zone prep time = "
                       << zonePreprocessingMs << " ms\n";

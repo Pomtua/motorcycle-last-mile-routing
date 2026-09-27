@@ -31,9 +31,12 @@ namespace
 
 int main(int argc, char **argv)
 {
-    if (argc != 2)
+    if (argc != 3)
     {
-        std::cerr << "usage: test_local_search <instance.json>\n";
+        std::cerr
+            << "usage: test_local_search "
+               "<basic_instance.json> "
+               "<fleet_repair_instance.json>\n";
         return 2;
     }
 
@@ -116,6 +119,39 @@ int main(int argc, char **argv)
             zoneAwareMetrics.routeZoneExcess <
                 distanceMetrics.routeZoneExcess,
             "zone-aware search must reduce route-zone excess");
+
+        const router::Instance fleetRepairInstance =
+            router::loadInstance(argv[2]);
+        const router::Solution overFleetSeed =
+            router::solomonI1(
+                fleetRepairInstance, false);
+
+        expect(
+            overFleetSeed.routes.size() >
+                static_cast<std::size_t>(
+                    fleetRepairInstance.fleet.size),
+            "regression seed must initially exceed fleet size");
+
+        const router::ZoneSelection fleetRepairZones =
+            router::selectZones(fleetRepairInstance);
+        const router::Solution repaired =
+            router::localSearch(
+                fleetRepairInstance,
+                overFleetSeed,
+                fleetRepairZones.zoneOf,
+                10888.0);
+        const router::ValidationReport repairedReport =
+            router::validate(
+                fleetRepairInstance, repaired);
+
+        expect(
+            repaired.routes.size() <=
+                static_cast<std::size_t>(
+                    fleetRepairInstance.fleet.size),
+            "zone-aware local search must repair excess routes");
+        expect(
+            repairedReport.feasible,
+            "fleet-repaired zone-aware solution must be valid");
 
         if (failures != 0)
         {
