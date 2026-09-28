@@ -27,6 +27,10 @@ infra/osrm/cache/*.json
 data/master_pool/*.csv
 data/instances/*.json
 
+# Generated benchmark results
+results/
+
+
 # Engine
 build/
 *.o
