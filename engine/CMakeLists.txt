@@ -37,6 +37,7 @@ add_library(router_core
     src/insertion.cpp
     src/solomon_i1.cpp
     src/local_search.cpp
+    src/hgs.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
@@ -82,6 +83,9 @@ if(BUILD_TESTING)
     add_executable(test_local_search tests/test_local_search.cpp)
     target_link_libraries(test_local_search PRIVATE router_core)
 
+    add_executable(test_hgs tests/test_hgs.cpp)
+    target_link_libraries(test_hgs PRIVATE router_core)
+
     add_test(NAME zones COMMAND test_zones)
     add_test(
         NAME local_search
@@ -89,4 +93,5 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/../data/instances/C_D1_n20_loose_s42_instance.json"
             "${PROJECT_SOURCE_DIR}/../data/instances/R_D1_n100_tight_s42_instance.json"
     )
+    add_test(NAME hgs COMMAND test_hgs)
 endif()
