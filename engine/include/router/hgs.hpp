@@ -21,6 +21,13 @@ namespace router
         double timeWarp = 0.0;
     };
 
+    struct HgsPenaltyWeights
+    {
+        double weightPenalty = 0.0;
+        double volumePenalty = 0.0;
+        double timeWarpPenalty = 0.0;
+    };
+
     struct HgsIndividualEvaluation
     {
         double distanceCost = 0.0;
@@ -54,6 +61,10 @@ namespace router
     std::vector<HgsGene> makeCanonicalGiantTour(
         std::size_t visitCount);
 
+    std::vector<HgsGene> encodeSolutionAsGiantTour(
+        const Solution &solution,
+        const std::vector<Visit> &visitCatalog);
+
     HgsRouteSegmentEvaluation evaluateGiantTourSegment(
         const Instance &inst,
         const std::vector<Visit> &visitCatalog,
@@ -68,6 +79,26 @@ namespace router
         std::size_t beginIndex,
         std::size_t endIndex,
         const std::vector<int> &zoneOf);
+
+    HgsIndividualEvaluation aggregateHgsIndividualEvaluation(
+        const std::vector<HgsRouteSegmentEvaluation>
+            &routeEvaluations,
+        const HgsPenaltyWeights &penaltyWeights,
+        double zonePenalty);
+
+    HgsIndividual decodeGiantTour(
+        const Instance &inst,
+        const std::vector<Visit> &visitCatalog,
+        const std::vector<HgsGene> &giantTour,
+        const HgsPenaltyWeights &penaltyWeights);
+
+    HgsIndividual decodeGiantTour(
+        const Instance &inst,
+        const std::vector<Visit> &visitCatalog,
+        const std::vector<HgsGene> &giantTour,
+        const HgsPenaltyWeights &penaltyWeights,
+        const std::vector<int> &zoneOf,
+        double zonePenalty);
 
     bool isCompleteGiantTourPermutation(
         const std::vector<HgsGene> &giantTour,

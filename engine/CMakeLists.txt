@@ -65,6 +65,9 @@ target_link_libraries(run_i1 PRIVATE router_core nlohmann_json::nlohmann_json)
 add_executable(run_ls apps/run_ls.cpp)
 target_link_libraries(run_ls PRIVATE router_core nlohmann_json::nlohmann_json)
 
+add_executable(bench_hgs_split apps/bench_hgs_split.cpp)
+target_link_libraries(bench_hgs_split PRIVATE router_core)
+
 option(WITH_ORTOOLS "Build the OR-Tools comparison bridge (run_ortools)" OFF)
 
 if(WITH_ORTOOLS)
