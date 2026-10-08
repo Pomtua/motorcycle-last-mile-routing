@@ -14,6 +14,10 @@ class InstanceGenerator:
         self.pool = []
         self.pool_by_id = {}
         self.http_session = requests.Session()
+        self.osrm_base_url = os.environ.get(
+            "OSRM_BASE_URL", "http://localhost:5000"
+        ).rstrip("/")
+        self.osrm_dataset_id = os.environ.get("OSRM_DATASET_ID", "").strip()
         self.pop_eps = 1.0
         self.service_times = {
             "house": 120,
@@ -159,29 +163,83 @@ class InstanceGenerator:
             })
         return demands
 
+    @staticmethod
+    def validate_osrm_matrix(matrix, expected_size, label):
+        if (
+            not isinstance(matrix, list) or
+            len(matrix) != expected_size or
+            any(
+                not isinstance(row, list) or len(row) != expected_size
+                for row in matrix
+            )
+        ):
+            raise ValueError(
+                f"{label} must be a {expected_size}x{expected_size} matrix"
+            )
+        for i, row in enumerate(matrix):
+            for j, value in enumerate(row):
+                if (
+                    isinstance(value, bool) or
+                    not isinstance(value, (int, float)) or
+                    not math.isfinite(value) or
+                    value < 0.0
+                ):
+                    raise ValueError(
+                        f"{label}[{i}][{j}] must be finite and >= 0; got {value!r}"
+                    )
+                if i == j and value != 0.0:
+                    raise ValueError(f"{label}[{i}][{j}] must be zero")
+
     def call_osrm_table(self, locations):
-        cache_key = hashlib.md5(";".join([loc['osm_id'] for loc in locations]).encode('utf-8')).hexdigest()
+        if not self.osrm_dataset_id:
+            raise ValueError("OSRM_DATASET_ID must identify the graph and OSRM build")
+        if not locations:
+            raise ValueError("OSRM table requires at least one location")
+
+        coords_str = ";".join([f"{loc['lng']},{loc['lat']}" for loc in locations])
+        request_metadata = {
+            'schema_version': 1,
+            'base_url': self.osrm_base_url,
+            'profile': 'motorcycle',
+            'dataset_id': self.osrm_dataset_id,
+            'coordinates': coords_str
+        }
+        cache_key = hashlib.sha256(
+            json.dumps(
+                request_metadata, sort_keys=True, separators=(',', ':')
+            ).encode('utf-8')
+        ).hexdigest()
         cache_path = f"infra/osrm/cache/{cache_key}.json"
 
         if os.path.exists(cache_path):
             with open(cache_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                return data['durations'], data['distances']
-            
-        coords_str = ";".join([f"{loc['lng']},{loc['lat']}" for loc in locations])
-        url = f"http://localhost:5000/table/v1/motorcycle/{coords_str}?annotations=duration,distance"
-        response = self.http_session.get(url)
-        res_data = response.json()
-        if res_data.get('code') != 'Ok':
-            raise Exception("OSRM table call failed")
-        
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                'durations': res_data['durations'],
-                'distances': res_data['distances']
-            }, f)
-        return res_data['durations'], res_data['distances']
+            if not isinstance(data, dict) or data.get('request') != request_metadata:
+                raise ValueError(f"OSRM cache metadata mismatch: {cache_path}")
+        else:
+            url = (
+                f"{self.osrm_base_url}/table/v1/motorcycle/{coords_str}"
+                "?annotations=duration,distance"
+            )
+            response = self.http_session.get(url, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or data.get('code') != 'Ok':
+                raise ValueError("OSRM table response must contain code=Ok")
+            data = {
+                'request': request_metadata,
+                'durations': data.get('durations'),
+                'distances': data.get('distances')
+            }
+
+        self.validate_osrm_matrix(data.get('durations'), len(locations), 'durations')
+        self.validate_osrm_matrix(data.get('distances'), len(locations), 'distances')
+
+        if not os.path.exists(cache_path):
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, allow_nan=False)
+        return data['durations'], data['distances']
 
     def split_value(self, total_val, m, precision):
         scale = 10**precision
