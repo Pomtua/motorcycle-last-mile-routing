@@ -1,0 +1,4 @@
+*
+!Dockerfile.patched
+!patches/
+!patches/mld-table-nonnegative-candidates.patch

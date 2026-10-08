@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1.7
+FROM debian:trixie-slim AS builder
+
+ARG BUILD_JOBS=2
+ARG OSRM_COMMIT=d173ad3eb020900f3f111f2e1fcb4769d9100573
+ARG VCPKG_COMMIT=c3867e714dd3a51c272826eea77267876517ed99
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake build-essential ca-certificates cmake curl \
+    git libtool ninja-build pkg-config tar unzip zip
+
+ENV VCPKG_ROOT=/vcpkg \
+    VCPKG_FORCE_SYSTEM_BINARIES=1 \
+    VCPKG_MAX_CONCURRENCY=${BUILD_JOBS}
+
+RUN mkdir -p /vcpkg && \
+    curl -fsSL "https://github.com/microsoft/vcpkg/archive/${VCPKG_COMMIT}.tar.gz" | \
+    tar -xz --strip-components=1 -C /vcpkg
+RUN /vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+WORKDIR /src
+RUN git init . && \
+    git remote add origin https://github.com/Project-OSRM/osrm-backend.git && \
+    git fetch --depth 1 origin "${OSRM_COMMIT}" && \
+    git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "${OSRM_COMMIT}"
+
+RUN --mount=type=cache,target=/root/.cache/vcpkg/archives,sharing=locked \
+    --mount=type=cache,target=/vcpkg/downloads,sharing=locked \
+    VCPKG_DEFAULT_BINARY_CACHE=/root/.cache/vcpkg/archives \
+    /vcpkg/vcpkg install \
+        --x-manifest-root=/src \
+        --x-install-root=/src/build/vcpkg_installed \
+        --triplet=x64-linux --no-print-usage \
+        --clean-buildtrees-after-build --clean-packages-after-build
+
+COPY patches/mld-table-nonnegative-candidates.patch /tmp/mld-table.patch
+RUN git apply --check /tmp/mld-table.patch && \
+    git apply /tmp/mld-table.patch
+
+RUN CXXFLAGS="-Wno-array-bounds -Wno-uninitialized -Wno-stringop-overflow" \
+    cmake -S /src -B /src/build -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake \
+        -DVCPKG_TARGET_TRIPLET=x64-linux \
+        -DVCPKG_MANIFEST_INSTALL=OFF \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DENABLE_LTO=OFF -DENABLE_CCACHE=OFF
+RUN cmake --build /src/build --target osrm-routed --parallel "${BUILD_JOBS}" && \
+    mkdir -p /out/lib && \
+    cp /src/build/osrm-routed /out/osrm-routed && \
+    strip /out/osrm-routed && \
+    find /src/build/vcpkg_installed/x64-linux/lib \
+        -maxdepth 1 -name 'libtbb*.so*' \
+        -exec cp -a {} /out/lib/ \;
+
+FROM ghcr.io/project-osrm/osrm-backend:26.6.5-debian@sha256:7e2d775e5dd1f6752f679621e79dcff3b6bc37266733c771a360af9b3d652205
+LABEL motorcycle.osrm.patch="mld-table-nonnegative-candidates" \
+      motorcycle.osrm.source="d173ad3eb020900f3f111f2e1fcb4769d9100573"
+COPY --from=builder /out/osrm-routed /usr/local/bin/osrm-routed
+COPY --from=builder /out/lib/ /usr/local/lib/
+RUN ldconfig /usr/local/lib && /usr/local/bin/osrm-routed --version
+
+WORKDIR /opt
+EXPOSE 5000

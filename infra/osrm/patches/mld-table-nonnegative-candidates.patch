@@ -1,0 +1,30 @@
+diff --git a/src/engine/routing_algorithms/many_to_many_mld.cpp b/src/engine/routing_algorithms/many_to_many_mld.cpp
+--- a/src/engine/routing_algorithms/many_to_many_mld.cpp
++++ b/src/engine/routing_algorithms/many_to_many_mld.cpp
+@@ -288,11 +288,11 @@
+             std::tie(index, target_weight, target_duration, target_distance) = it->second;
+
+             const auto path_weight = weight + target_weight;
+-            if (path_weight >= EdgeWeight{0})
+-            {
+-                const auto path_duration = duration + target_duration;
+-                const auto path_distance = distance + target_distance;
+-
++            const auto path_duration = duration + target_duration;
++            const auto path_distance = distance + target_distance;
++            if (path_weight >= EdgeWeight{0} && path_duration >= EdgeDuration{0} &&
++                path_distance >= EdgeDistance{0})
++            {
+                 EdgeDistance nulldistance = {0};
+                 auto &current_distance =
+                     distances_table.empty() ? nulldistance : distances_table[index];
+@@ -448,7 +448,8 @@
+         auto new_duration = heapNode.data.duration + target_duration;
+         auto new_distance = heapNode.data.distance + target_distance;
+
+-        if (new_weight >= EdgeWeight{0} &&
++        if (new_weight >= EdgeWeight{0} && new_duration >= EdgeDuration{0} &&
++            new_distance >= EdgeDistance{0} &&
+             std::tie(new_weight, new_duration, new_distance) <
+                 std::tie(current_weight, current_duration, current_distance))
+         {
