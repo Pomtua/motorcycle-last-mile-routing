@@ -38,6 +38,9 @@ add_library(router_core
     src/solomon_i1.cpp
     src/local_search.cpp
     src/hgs.cpp
+    src/hgs/problem_data.cpp
+    src/hgs/cost_model.cpp
+    src/hgs/search_context.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
@@ -100,4 +103,11 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/../data/instances/R_D1_n100_tight_s42_instance.json"
     )
     add_test(NAME hgs COMMAND test_hgs)
+
+    foreach(hgs_test_name problem_data route_summary search_context)
+        add_executable(test_hgs_${hgs_test_name} tests/hgs/test_${hgs_test_name}.cpp)
+        target_include_directories(test_hgs_${hgs_test_name} PRIVATE tests)
+        target_link_libraries(test_hgs_${hgs_test_name} PRIVATE router_core)
+        add_test(NAME hgs_${hgs_test_name} COMMAND test_hgs_${hgs_test_name})
+    endforeach()
 endif()
