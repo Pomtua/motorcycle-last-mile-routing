@@ -1120,6 +1120,36 @@ namespace router
             return best;
         }
 
+        void perturbGiantTour(
+            std::vector<HgsGene> &tour,
+            double strength,
+            std::mt19937 &rng)
+        {
+            if (tour.size() < 2)
+            {
+                return;
+            }
+            const std::size_t maxMoves = std::max<std::size_t>(
+                1, static_cast<std::size_t>(strength * static_cast<double>(tour.size())));
+            std::uniform_int_distribution<std::size_t> drawMoves(1, maxMoves);
+            std::uniform_int_distribution<std::size_t> drawIndex(0, tour.size() - 1);
+            std::bernoulli_distribution drawSwap(0.5);
+            const std::size_t moves = drawMoves(rng);
+            for (std::size_t move = 0; move < moves; ++move)
+            {
+                const std::size_t from = drawIndex(rng);
+                const std::size_t to = drawIndex(rng);
+                if (drawSwap(rng))
+                {
+                    std::swap(tour[from], tour[to]);
+                    continue;
+                }
+                const HgsGene gene = tour[from];
+                tour.erase(tour.begin() + static_cast<std::ptrdiff_t>(from));
+                tour.insert(tour.begin() + static_cast<std::ptrdiff_t>(to), gene);
+            }
+        }
+
         HgsRunResult runHgsImpl(
             const Instance &inst,
             const std::vector<Visit> &visitCatalog,
@@ -1135,7 +1165,13 @@ namespace router
                 options.nClose == 0 || options.nElite > options.mu ||
                 options.maxNonImprovingIterations == 0 ||
                 !std::isfinite(options.repairProbability) ||
-                options.repairProbability < 0.0 || options.repairProbability > 1.0)
+                options.repairProbability < 0.0 || options.repairProbability > 1.0 ||
+                !std::isfinite(options.perturbedFillFraction) ||
+                options.perturbedFillFraction < 0.0 || options.perturbedFillFraction > 1.0 ||
+                !std::isfinite(options.perturbationStrength) ||
+                options.perturbationStrength < 0.0 || options.perturbationStrength > 1.0 ||
+                !std::isfinite(options.fillTimeFraction) ||
+                options.fillTimeFraction <= 0.0 || options.fillTimeFraction > 1.0)
             {
                 throw std::invalid_argument("invalid HGS run options");
             }
@@ -1189,13 +1225,37 @@ namespace router
             };
             const auto fill = [&]()
             {
+                HgsDeadline fillDeadline;
+                if (options.deadline)
+                {
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto remaining = std::chrono::duration<double>(*options.deadline - now);
+                    fillDeadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        remaining * options.fillTimeFraction);
+                }
+                const std::size_t attempts = 4 * options.mu;
+                const std::size_t perturbedAttempts = static_cast<std::size_t>(
+                    std::llround(options.perturbedFillFraction * static_cast<double>(attempts)));
                 bool improved = false;
-                for (std::size_t attempt = 0; attempt < 4 * options.mu; ++attempt)
+                for (std::size_t attempt = 0; attempt < attempts; ++attempt)
                 {
                     checkHgsDeadline(options.deadline);
-                    ++result.randomTourAttempts;
+                    if (attempt > 0 && hgsDeadlineExpired(fillDeadline))
+                    {
+                        ++result.fillsCutByTime;
+                        break;
+                    }
                     auto tour = population.bestFeasible()->giantTour;
-                    std::shuffle(tour.begin(), tour.end(), rng);
+                    if (attempt < perturbedAttempts)
+                    {
+                        ++result.perturbedFillAttempts;
+                        perturbGiantTour(tour, options.perturbationStrength, rng);
+                    }
+                    else
+                    {
+                        ++result.randomTourAttempts;
+                        std::shuffle(tour.begin(), tour.end(), rng);
+                    }
                     std::optional<HgsIndividual> decoded;
                     try
                     {

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -1551,7 +1552,9 @@ int main()
         pipelineInstance, pipelineCatalog, pipelineSeed, educationPenalties, runOptions);
     expect(
         runResult.iterations == 6 &&
-            runResult.randomTourAttempts == 8 &&
+            runResult.perturbedFillAttempts == 4 &&
+            runResult.randomTourAttempts == 4 &&
+            runResult.fillsCutByTime == 0 &&
             runResult.stopReason == router::HgsStopReason::IterationLimit &&
             runResult.bestFeasible.evaluation.feasible &&
             router::validate(pipelineInstance, runResult.bestFeasible.decodedSolution).feasible,
@@ -1597,7 +1600,8 @@ int main()
     const auto seedOnlyRun = router::runHgs(
         pipelineInstance, pipelineCatalog, pipelineSeed, educationPenalties, seedOnlyOptions);
     expect(
-        seedOnlyRun.iterations == 0 && seedOnlyRun.randomTourAttempts == 0,
+        seedOnlyRun.iterations == 0 && seedOnlyRun.randomTourAttempts == 0 &&
+            seedOnlyRun.perturbedFillAttempts == 0,
         "zero iteration budget must return the seed without generating individuals");
 
     router::HgsPopulation thresholdPopulation(segmentCatalog.size());
@@ -1635,6 +1639,39 @@ int main()
                 educationPenalties, invalidRunOptions);
         },
         "HGS must reject invalid population options");
+    for (const auto &mutate : std::vector<std::function<void(router::HgsRunOptions &)>>{
+             [](router::HgsRunOptions &o) { o.perturbedFillFraction = -0.1; },
+             [](router::HgsRunOptions &o) { o.perturbedFillFraction = 1.1; },
+             [](router::HgsRunOptions &o) { o.perturbationStrength = std::numeric_limits<double>::quiet_NaN(); },
+             [](router::HgsRunOptions &o) { o.fillTimeFraction = 0.0; },
+             [](router::HgsRunOptions &o) { o.fillTimeFraction = 1.5; }})
+    {
+        auto badFillOptions = runOptions;
+        mutate(badFillOptions);
+        expectInvalidArgument(
+            [&]()
+            {
+                router::runHgs(
+                    pipelineInstance, pipelineCatalog, pipelineSeed,
+                    educationPenalties, badFillOptions);
+            },
+            "HGS must reject invalid population fill options");
+    }
+
+    auto randomFillOptions = runOptions;
+    randomFillOptions.perturbedFillFraction = 0.0;
+    const auto randomFillRun = router::runHgs(
+        pipelineInstance, pipelineCatalog, pipelineSeed, educationPenalties, randomFillOptions);
+    auto perturbedFillOptions = runOptions;
+    perturbedFillOptions.perturbedFillFraction = 1.0;
+    const auto perturbedFillRun = router::runHgs(
+        pipelineInstance, pipelineCatalog, pipelineSeed, educationPenalties, perturbedFillOptions);
+    expect(
+        randomFillRun.randomTourAttempts == 8 && randomFillRun.perturbedFillAttempts == 0 &&
+            perturbedFillRun.randomTourAttempts == 0 && perturbedFillRun.perturbedFillAttempts == 8 &&
+            router::validate(pipelineInstance, randomFillRun.bestFeasible.decodedSolution).feasible &&
+            router::validate(pipelineInstance, perturbedFillRun.bestFeasible.decodedSolution).feasible,
+        "population fill must split attempts between perturbed and random fills");
     expectInvalidArgument(
         [&]() { thresholdPopulation.selectSurvivors(segmentCatalog, 2, 1, 1, 2); },
         "survivor trigger must be above the target size");
@@ -1667,6 +1704,7 @@ int main()
     expect(
         emptyRun.stopReason == router::HgsStopReason::EmptyInstance &&
             emptyRun.iterations == 0 && emptyRun.randomTourAttempts == 0 &&
+            emptyRun.perturbedFillAttempts == 0 &&
             emptyRun.bestFeasible.decodedSolution.routes.empty(),
         "empty HGS instances must finish without crossover or population generation");
 
@@ -1695,6 +1733,7 @@ int main()
     expect(
         expiredRun.stopReason == router::HgsStopReason::TimeLimit &&
             expiredRun.iterations == 0 && expiredRun.randomTourAttempts == 0 &&
+            expiredRun.perturbedFillAttempts == 0 &&
             router::validate(pipelineInstance, expiredRun.bestFeasible.decodedSolution).feasible,
         "expired deadlines must return the validated seed without starting search");
 

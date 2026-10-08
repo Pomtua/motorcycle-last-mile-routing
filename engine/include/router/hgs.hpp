@@ -123,6 +123,9 @@ namespace router
         std::size_t diversificationInterval = 2000;
         std::size_t maxAcceptedEducationMoves = 100;
         double repairProbability = 0.5;
+        double perturbedFillFraction = 0.5;
+        double perturbationStrength = 0.1;
+        double fillTimeFraction = 0.2;
         HgsPenaltyControlOptions penaltyControl;
         HgsDeadline deadline;
     };
@@ -142,6 +145,8 @@ namespace router
         HgsStopReason stopReason = HgsStopReason::IterationLimit;
         std::size_t iterations = 0;
         std::size_t randomTourAttempts = 0;
+        std::size_t perturbedFillAttempts = 0;
+        std::size_t fillsCutByTime = 0;
         std::size_t splitFailures = 0;
         std::size_t repairsAttempted = 0;
         std::size_t repairsSucceeded = 0;

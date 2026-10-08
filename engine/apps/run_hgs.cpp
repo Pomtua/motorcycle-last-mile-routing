@@ -248,6 +248,9 @@ int main(int argc, char **argv)
                 {"diversification_interval", options.diversificationInterval},
                 {"max_accepted_education_moves", options.maxAcceptedEducationMoves},
                 {"repair_probability", options.repairProbability},
+                {"perturbed_fill_fraction", options.perturbedFillFraction},
+                {"perturbation_strength", options.perturbationStrength},
+                {"fill_time_fraction", options.fillTimeFraction},
                 {"penalty_control", {
                     {"window_size", options.penaltyControl.windowSize},
                     {"target_feasible", options.penaltyControl.targetFeasible},
@@ -380,6 +383,8 @@ int main(int argc, char **argv)
         runResult["objective_cost"] = hgs.bestFeasible.evaluation.objectiveCost;
         runResult["iterations"] = hgs.iterations;
         runResult["random_tour_attempts"] = hgs.randomTourAttempts;
+        runResult["perturbed_fill_attempts"] = hgs.perturbedFillAttempts;
+        runResult["fills_cut_by_time"] = hgs.fillsCutByTime;
         runResult["split_failures"] = hgs.splitFailures;
         runResult["repairs_attempted"] = hgs.repairsAttempted;
         runResult["repairs_succeeded"] = hgs.repairsSucceeded;
@@ -507,6 +512,8 @@ int main(int argc, char **argv)
         std::cout << "stop reason    = " << stopReasonName(hgs.stopReason) << "\n";
         std::cout << "iterations     = " << hgs.iterations << "\n";
         std::cout << "random tours   = " << hgs.randomTourAttempts << "\n";
+        std::cout << "perturbed fills= " << hgs.perturbedFillAttempts << "\n";
+        std::cout << "fills cut      = " << hgs.fillsCutByTime << "\n";
         std::cout << "repairs        = " << hgs.repairsSucceeded
                   << " / " << hgs.repairsAttempted << "\n";
         std::cout << "hgs prep time  = " << runResult["hgs_preprocessing_ms"] << " ms\n";
