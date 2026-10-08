@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <set>
@@ -18,8 +20,120 @@ namespace router
         constexpr double kVolumeTolerance = 1e-9;
         constexpr double kTimeTolerance = 1e-6;
 
+        struct HgsStageStats
+        {
+            double totalMs = 0.0;
+            std::size_t calls = 0;
+            std::size_t accepted = 0;
+        };
+
+        struct HgsProfile
+        {
+            HgsStageStats fill;
+            HgsStageStats crossover;
+            HgsStageStats split;
+            HgsStageStats education;
+            HgsStageStats relocate;
+            HgsStageStats swap;
+            HgsStageStats twoOpt;
+            HgsStageStats twoOptStar;
+            HgsStageStats repair;
+            HgsStageStats trim;
+            HgsStageStats parentSelection;
+            HgsStageStats fitness;
+            std::size_t segmentEvaluations = 0;
+            std::size_t segmentStops = 0;
+            std::size_t individualRebuilds = 0;
+            std::size_t brokenPairsDistances = 0;
+            std::size_t deadlineChecks = 0;
+        };
+
+        const bool kHgsProfiling = std::getenv("HGS_PROFILE") != nullptr;
+
+        HgsProfile &hgsProfile()
+        {
+            static HgsProfile profile;
+            return profile;
+        }
+
+        class HgsProfileScope
+        {
+        public:
+            explicit HgsProfileScope(HgsStageStats &stats)
+                : stats_(kHgsProfiling ? &stats : nullptr)
+            {
+                if (stats_ != nullptr)
+                {
+                    start_ = std::chrono::steady_clock::now();
+                }
+            }
+
+            HgsProfileScope(const HgsProfileScope &) = delete;
+            HgsProfileScope &operator=(const HgsProfileScope &) = delete;
+
+            ~HgsProfileScope()
+            {
+                if (stats_ == nullptr)
+                {
+                    return;
+                }
+                stats_->totalMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - start_).count();
+                ++stats_->calls;
+                if (accepted_)
+                {
+                    ++stats_->accepted;
+                }
+            }
+
+            void accept()
+            {
+                accepted_ = true;
+            }
+
+        private:
+            HgsStageStats *stats_;
+            std::chrono::steady_clock::time_point start_;
+            bool accepted_ = false;
+        };
+
+        void printHgsProfile(double runMs)
+        {
+            const HgsProfile &p = hgsProfile();
+            const auto row = [](const char *name, const HgsStageStats &s)
+            {
+                std::cerr << name << ": calls=" << s.calls << " accepted=" << s.accepted
+                          << " totalMs=" << s.totalMs
+                          << " avgMs=" << (s.calls ? s.totalMs / static_cast<double>(s.calls) : 0.0)
+                          << "\n";
+            };
+            std::cerr << "--- hgs profile ---\n";
+            std::cerr << "run total ms           = " << runMs << "\n";
+            row("fill                  ", p.fill);
+            row("crossover             ", p.crossover);
+            row("split                 ", p.split);
+            row("education             ", p.education);
+            row("  relocate            ", p.relocate);
+            row("  swap                ", p.swap);
+            row("  2-opt               ", p.twoOpt);
+            row("  2-opt*              ", p.twoOptStar);
+            row("repair                ", p.repair);
+            row("trim                  ", p.trim);
+            row("parent selection      ", p.parentSelection);
+            row("fitness               ", p.fitness);
+            std::cerr << "segment evaluations    = " << p.segmentEvaluations << "\n";
+            std::cerr << "segment stops          = " << p.segmentStops << "\n";
+            std::cerr << "individual rebuilds    = " << p.individualRebuilds << "\n";
+            std::cerr << "broken-pairs distances = " << p.brokenPairsDistances << "\n";
+            std::cerr << "deadline checks        = " << p.deadlineChecks << "\n";
+        }
+
         bool hgsDeadlineExpired(const HgsDeadline &deadline)
         {
+            if (kHgsProfiling && deadline)
+            {
+                ++hgsProfile().deadlineChecks;
+            }
             return deadline && std::chrono::steady_clock::now() >= *deadline;
         }
 
@@ -325,6 +439,7 @@ namespace router
             double zonePenalty,
             const HgsDeadline &deadline = std::nullopt)
         {
+            HgsProfileScope profileScope(hgsProfile().split);
             checkHgsDeadline(deadline);
             validatePenaltyWeights(
                 penaltyWeights, zonePenalty);
@@ -527,6 +642,10 @@ namespace router
             const std::vector<int> *zoneOf,
             double zonePenalty)
         {
+            if (kHgsProfiling)
+            {
+                ++hgsProfile().individualRebuilds;
+            }
             validatePenaltyWeights(penaltyWeights, zonePenalty);
 
             if (inst.fleet.size < 0 ||
@@ -595,6 +714,11 @@ namespace router
             const std::vector<int> *zoneOf,
             const HgsDeadline &deadline)
         {
+            if (kHgsProfiling)
+            {
+                ++hgsProfile().segmentEvaluations;
+                hgsProfile().segmentStops += endIndex > beginIndex ? endIndex - beginIndex : 0;
+            }
             checkHgsDeadline(deadline);
             if (beginIndex >= endIndex ||
                 endIndex > giantTour.size())
@@ -764,6 +888,7 @@ namespace router
             std::size_t maxAcceptedMoves,
             const HgsDeadline &deadline = std::nullopt)
         {
+            HgsProfileScope profileScope(hgsProfile().relocate);
             HgsIndividual current = makeHgsIndividualFromSolutionImpl(
                 inst, visitCatalog, individual.decodedSolution,
                 penaltyWeights, zoneOf, zonePenalty);
@@ -865,6 +990,7 @@ namespace router
                                     inst, visitCatalog, candidate,
                                     penaltyWeights, zoneOf, zonePenalty);
                                 improved = true;
+                                profileScope.accept();
                                 break;
                             }
                         }
@@ -946,31 +1072,60 @@ namespace router
                 return true;
             };
 
-            for (std::size_t first = 0; first < genes.size(); ++first)
             {
-                if (hgsDeadlineExpired(deadline)) { return false; }
-                for (std::size_t second = first; second < genes.size(); ++second)
+                HgsProfileScope profileScope(hgsProfile().swap);
+                for (std::size_t first = 0; first < genes.size(); ++first)
                 {
                     if (hgsDeadlineExpired(deadline)) { return false; }
-                    for (std::size_t a = 0; a < genes[first].size(); ++a)
+                    for (std::size_t second = first; second < genes.size(); ++second)
                     {
                         if (hgsDeadlineExpired(deadline)) { return false; }
-                        const std::size_t start = first == second ? a + 1 : 0;
-                        for (std::size_t b = start; b < genes[second].size(); ++b)
+                        for (std::size_t a = 0; a < genes[first].size(); ++a)
                         {
                             if (hgsDeadlineExpired(deadline)) { return false; }
-                            auto firstGenes = genes[first];
-                            auto secondGenes = genes[second];
-                            if (first == second)
+                            const std::size_t start = first == second ? a + 1 : 0;
+                            for (std::size_t b = start; b < genes[second].size(); ++b)
                             {
-                                std::swap(firstGenes[a], firstGenes[b]);
+                                if (hgsDeadlineExpired(deadline)) { return false; }
+                                auto firstGenes = genes[first];
+                                auto secondGenes = genes[second];
+                                if (first == second)
+                                {
+                                    std::swap(firstGenes[a], firstGenes[b]);
+                                }
+                                else
+                                {
+                                    std::swap(firstGenes[a], secondGenes[b]);
+                                }
+                                if (tryMove(first, firstGenes, second, secondGenes))
+                                {
+                                    profileScope.accept();
+                                    return true;
+                                }
                             }
-                            else
+                        }
+                    }
+                }
+            }
+
+            {
+                HgsProfileScope profileScope(hgsProfile().twoOpt);
+                for (std::size_t route = 0; route < genes.size(); ++route)
+                {
+                    if (hgsDeadlineExpired(deadline)) { return false; }
+                    for (std::size_t begin = 0; begin < genes[route].size(); ++begin)
+                    {
+                        if (hgsDeadlineExpired(deadline)) { return false; }
+                        for (std::size_t end = begin + 2; end <= genes[route].size(); ++end)
+                        {
+                            if (hgsDeadlineExpired(deadline)) { return false; }
+                            auto reversed = genes[route];
+                            std::reverse(
+                                reversed.begin() + static_cast<std::ptrdiff_t>(begin),
+                                reversed.begin() + static_cast<std::ptrdiff_t>(end));
+                            if (tryMove(route, reversed, route, reversed))
                             {
-                                std::swap(firstGenes[a], secondGenes[b]);
-                            }
-                            if (tryMove(first, firstGenes, second, secondGenes))
-                            {
+                                profileScope.accept();
                                 return true;
                             }
                         }
@@ -978,61 +1133,45 @@ namespace router
                 }
             }
 
-            for (std::size_t route = 0; route < genes.size(); ++route)
             {
-                if (hgsDeadlineExpired(deadline)) { return false; }
-                for (std::size_t begin = 0; begin < genes[route].size(); ++begin)
+                HgsProfileScope profileScope(hgsProfile().twoOptStar);
+                for (std::size_t first = 0; first < genes.size(); ++first)
                 {
                     if (hgsDeadlineExpired(deadline)) { return false; }
-                    for (std::size_t end = begin + 2; end <= genes[route].size(); ++end)
+                    for (std::size_t second = first + 1; second < genes.size(); ++second)
                     {
                         if (hgsDeadlineExpired(deadline)) { return false; }
-                        auto reversed = genes[route];
-                        std::reverse(
-                            reversed.begin() + static_cast<std::ptrdiff_t>(begin),
-                            reversed.begin() + static_cast<std::ptrdiff_t>(end));
-                        if (tryMove(route, reversed, route, reversed))
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            for (std::size_t first = 0; first < genes.size(); ++first)
-            {
-                if (hgsDeadlineExpired(deadline)) { return false; }
-                for (std::size_t second = first + 1; second < genes.size(); ++second)
-                {
-                    if (hgsDeadlineExpired(deadline)) { return false; }
-                    for (std::size_t a = 0; a <= genes[first].size(); ++a)
-                    {
-                        if (hgsDeadlineExpired(deadline)) { return false; }
-                        for (std::size_t b = 0; b <= genes[second].size(); ++b)
+                        for (std::size_t a = 0; a <= genes[first].size(); ++a)
                         {
                             if (hgsDeadlineExpired(deadline)) { return false; }
-                            std::vector<HgsGene> firstGenes(
-                                genes[first].begin(),
-                                genes[first].begin() + static_cast<std::ptrdiff_t>(a));
-                            firstGenes.insert(
-                                firstGenes.end(),
-                                genes[second].begin() + static_cast<std::ptrdiff_t>(b),
-                                genes[second].end());
-                            std::vector<HgsGene> secondGenes(
-                                genes[second].begin(),
-                                genes[second].begin() + static_cast<std::ptrdiff_t>(b));
-                            secondGenes.insert(
-                                secondGenes.end(),
-                                genes[first].begin() + static_cast<std::ptrdiff_t>(a),
-                                genes[first].end());
-                            if (tryMove(first, firstGenes, second, secondGenes))
+                            for (std::size_t b = 0; b <= genes[second].size(); ++b)
                             {
-                                return true;
+                                if (hgsDeadlineExpired(deadline)) { return false; }
+                                std::vector<HgsGene> firstGenes(
+                                    genes[first].begin(),
+                                    genes[first].begin() + static_cast<std::ptrdiff_t>(a));
+                                firstGenes.insert(
+                                    firstGenes.end(),
+                                    genes[second].begin() + static_cast<std::ptrdiff_t>(b),
+                                    genes[second].end());
+                                std::vector<HgsGene> secondGenes(
+                                    genes[second].begin(),
+                                    genes[second].begin() + static_cast<std::ptrdiff_t>(b));
+                                secondGenes.insert(
+                                    secondGenes.end(),
+                                    genes[first].begin() + static_cast<std::ptrdiff_t>(a),
+                                    genes[first].end());
+                                if (tryMove(first, firstGenes, second, secondGenes))
+                                {
+                                    profileScope.accept();
+                                    return true;
+                                }
                             }
                         }
                     }
                 }
             }
+
             return false;
         }
 
@@ -1046,6 +1185,7 @@ namespace router
             std::size_t maxAcceptedMoves,
             const HgsDeadline &deadline = std::nullopt)
         {
+            HgsProfileScope profileScope(hgsProfile().education);
             HgsIndividual current = makeHgsIndividualFromSolutionImpl(
                 inst, visitCatalog, individual.decodedSolution,
                 penaltyWeights, zoneOf, zonePenalty);
@@ -1079,6 +1219,7 @@ namespace router
             std::size_t maxAcceptedMovesPerAttempt,
             const HgsDeadline &deadline = std::nullopt)
         {
+            HgsProfileScope profileScope(hgsProfile().repair);
             HgsIndividual current = makeHgsIndividualFromSolutionImpl(
                 inst, visitCatalog, individual.decodedSolution,
                 penaltyWeights, zoneOf, zonePenalty);
@@ -1110,6 +1251,7 @@ namespace router
                     penaltyWeights, zoneOf, zonePenalty);
                 if (rescored.evaluation.feasible)
                 {
+                    profileScope.accept();
                     return rescored;
                 }
                 if (rescored.evaluation.penalizedCost < best.evaluation.penalizedCost)
@@ -1175,6 +1317,11 @@ namespace router
             {
                 throw std::invalid_argument("invalid HGS run options");
             }
+            const auto runStart = std::chrono::steady_clock::now();
+            if (kHgsProfiling)
+            {
+                hgsProfile() = HgsProfile{};
+            }
             HgsPenaltyController controller(initialPenalties, options.penaltyControl);
             HgsPopulation population(visitCatalog.size());
             HgsIndividual seed = makeHgsIndividualFromSolutionImpl(
@@ -1189,6 +1336,7 @@ namespace router
             std::uniform_real_distribution<double> drawProbability(0.0, 1.0);
             const auto trim = [&]()
             {
+                HgsProfileScope profileScope(hgsProfile().trim);
                 population.selectSurvivors(
                     visitCatalog, options.mu, options.nClose, options.nElite,
                     options.mu + options.lambda, options.deadline);
@@ -1225,6 +1373,7 @@ namespace router
             };
             const auto fill = [&]()
             {
+                HgsProfileScope profileScope(hgsProfile().fill);
                 HgsDeadline fillDeadline;
                 if (options.deadline)
                 {
@@ -1287,12 +1436,21 @@ namespace router
                     {
                         checkHgsDeadline(options.deadline);
                         ++result.iterations;
-                        const auto &first = population.selectParent(
-                            visitCatalog, options.nClose, options.nElite, rng, options.deadline);
-                        const auto &second = population.selectParent(
-                            visitCatalog, options.nClose, options.nElite, rng, options.deadline);
+                        const HgsIndividual *first = nullptr;
+                        const HgsIndividual *second = nullptr;
+                        {
+                            HgsProfileScope profileScope(hgsProfile().parentSelection);
+                            first = &population.selectParent(
+                                visitCatalog, options.nClose, options.nElite, rng, options.deadline);
+                            second = &population.selectParent(
+                                visitCatalog, options.nClose, options.nElite, rng, options.deadline);
+                        }
                         checkHgsDeadline(options.deadline);
-                        const auto tour = orderedCrossover(first.giantTour, second.giantTour, rng);
+                        std::vector<HgsGene> tour;
+                        {
+                            HgsProfileScope profileScope(hgsProfile().crossover);
+                            tour = orderedCrossover(first->giantTour, second->giantTour, rng);
+                        }
                         bool improved = false;
                         std::optional<HgsIndividual> decoded;
                         try
@@ -1340,6 +1498,11 @@ namespace router
             catch (const HgsTimeLimitReached &)
             {
                 result.stopReason = HgsStopReason::TimeLimit;
+            }
+            if (kHgsProfiling)
+            {
+                printHgsProfile(std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - runStart).count());
             }
             result.bestFeasible = *population.bestFeasible();
             result.finalPenaltyWeights = controller.weights();
@@ -1737,6 +1900,10 @@ namespace router
         const Solution &second,
         const HgsDeadline &deadline)
     {
+        if (kHgsProfiling)
+        {
+            ++hgsProfile().brokenPairsDistances;
+        }
         checkHgsDeadline(deadline);
         const HgsRouteAdjacency firstAdjacency =
             buildRouteAdjacency(visitCatalog, first, deadline);
@@ -1773,6 +1940,7 @@ namespace router
         std::size_t nElite,
         const HgsDeadline &deadline)
     {
+        HgsProfileScope profileScope(hgsProfile().fitness);
         checkHgsDeadline(deadline);
         if (nClose == 0)
         {
