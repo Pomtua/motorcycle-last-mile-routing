@@ -30,72 +30,6 @@ namespace
                    end - start)
             .count();
     }
-
-    router::HgsPenaltyWeights makeInitialPenalties(
-        const router::Instance &inst,
-        const std::vector<router::Visit> &visitCatalog)
-    {
-        double distanceScale = 0.0;
-        double weightScale = 0.0;
-        double volumeScale = 0.0;
-        double timeScale = 0.0;
-
-        for (const router::Visit &visit : visitCatalog)
-        {
-            weightScale = std::max(weightScale, visit.weight);
-            volumeScale = std::max(volumeScale, visit.volume);
-        }
-
-        for (const auto &row : inst.distanceMatrix)
-        {
-            for (double distance : row)
-            {
-                distanceScale = std::max(distanceScale, distance);
-            }
-        }
-
-        for (const auto &row : inst.durationMatrix)
-        {
-            for (double duration : row)
-            {
-                timeScale = std::max(timeScale, duration);
-            }
-        }
-
-        for (const router::Node &node : inst.nodes)
-        {
-            timeScale = std::max(
-                timeScale, static_cast<double>(node.serviceTime));
-        }
-
-        if (weightScale == 0.0)
-        {
-            weightScale = inst.fleet.weightCapacity;
-        }
-        if (volumeScale == 0.0)
-        {
-            volumeScale = inst.fleet.volumeCapacity;
-        }
-        if (timeScale == 0.0)
-        {
-            timeScale = inst.horizon;
-        }
-
-        for (double scale :
-             {distanceScale, weightScale, volumeScale, timeScale})
-        {
-            if (!std::isfinite(scale) || scale <= 0.0)
-            {
-                throw std::invalid_argument(
-                    "initial HGS penalty scales must be finite and positive");
-            }
-        }
-
-        return {
-            distanceScale / weightScale,
-            distanceScale / volumeScale,
-            distanceScale / timeScale};
-    }
 }
 
 int main(int argc, char **argv)
@@ -157,7 +91,7 @@ int main(int argc, char **argv)
             router::encodeSolutionAsGiantTour(
                 seed, visitCatalog);
         const router::HgsPenaltyWeights penalties =
-            makeInitialPenalties(inst, visitCatalog);
+            router::makeInitialHgsPenalties(inst, visitCatalog);
         const auto setupEnd = Clock::now();
 
         std::cout << std::fixed
