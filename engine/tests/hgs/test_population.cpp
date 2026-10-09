@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "hgs/test_support.hpp"
-#include "router/hgs.hpp"
 #include "router/hgs/cost_model.hpp"
 #include "router/hgs/individual.hpp"
 #include "router/hgs/population.hpp"
@@ -92,30 +91,36 @@ namespace
         return routes;
     }
 
-    void testBrokenPairsAgainstV1()
+    void testBrokenPairs()
     {
         const Setup setup = makeSetup(700, 30, false);
         const ProblemData data(setup.inst, setup.catalog);
         std::mt19937 rng(700);
         const auto individuals = randomIndividuals(data, setup, rng, 12, 0.2);
 
-        bool matches = true;
         bool symmetric = true;
         bool zeroOnSelf = true;
+        bool bounded = true;
         for (const auto &first : individuals)
         {
             zeroOnSelf = zeroOnSelf && router::hgs::brokenPairsDistance(first, first) == 0.0;
             for (const auto &second : individuals)
             {
-                const double v2 = router::hgs::brokenPairsDistance(first, second);
-                const double v1 = router::directedBrokenPairsDistance(
-                    setup.catalog, router::hgs::toSolution(data, first), router::hgs::toSolution(data, second));
-                matches = matches && near(v2, v1);
-                symmetric = symmetric && v2 == router::hgs::brokenPairsDistance(second, first);
+                const double distance = router::hgs::brokenPairsDistance(first, second);
+                symmetric = symmetric && distance == router::hgs::brokenPairsDistance(second, first);
+                bounded = bounded && distance >= 0.0 && distance <= 1.0;
             }
         }
-        expect(matches, "broken-pairs distance must match v1");
-        expect(symmetric && zeroOnSelf, "broken-pairs distance must be symmetric and zero on identical individuals");
+        expect(symmetric && zeroOnSelf && bounded,
+               "broken-pairs distance must be symmetric, zero on identical individuals and within [0, 1]");
+
+        const router::Instance small = hgs_test::makeRandomInstance(701, {.customers = 3, .maxDemandRatio = 0.4});
+        const ProblemData smallData(small, router::splitCustomers(small));
+        expect(smallData.visitCount() == 3, "the hand-worked example needs three unsplit visits");
+        const Individual forward = router::hgs::makeIndividual(smallData, {{1, 2, 3}});
+        const Individual reordered = router::hgs::makeIndividual(smallData, {{1, 3, 2}});
+        expect(near(router::hgs::brokenPairsDistance(forward, reordered), 5.0 / 6.0),
+               "routes 1-2-3 and 1-3-2 must differ in five of six predecessor and successor links");
     }
 
     void testRanks()
@@ -124,40 +129,6 @@ namespace
         expect(ascending == std::vector<double>({1.0, 0.375, 0.75, 0.375}), "ties must share the average normalized rank");
         const auto descending = router::hgs::averageRanks({0.1, 0.5, 0.3}, true);
         expect(near(descending[1], 1.0 / 3.0) && near(descending[0], 1.0), "higher-is-better ranks must favour larger values");
-    }
-
-    void testFitnessAgainstV1()
-    {
-        const Setup setup = makeSetup(710, 30, false);
-        const ProblemData data(setup.inst, setup.catalog);
-        const Penalties penalties{10.0, 2000.0, 0.5};
-        const PopulationOptions options{.mu = 25, .lambda = 40, .nClose = 3, .nElite = 4};
-        std::mt19937 rng(710);
-
-        router::hgs::Subpopulation subpopulation;
-        router::hgs::PopulationStats stats;
-        std::vector<router::HgsIndividual> v1Members;
-        for (const auto &individual : randomIndividuals(data, setup, rng, 15, 0.2))
-        {
-            if (router::hgs::isFeasible(individual.cost))
-            {
-                continue;
-            }
-            v1Members.push_back(router::makeHgsIndividualFromSolution(
-                setup.inst, setup.catalog, router::hgs::toSolution(data, individual),
-                {penalties.weight, penalties.volume, penalties.timeWarp}));
-            subpopulation.add(individual, stats);
-        }
-        expect(subpopulation.size() >= 10, "the fitness comparison needs a sizeable infeasible subpopulation");
-
-        const auto v2 = subpopulation.biasedFitness(data, penalties, options);
-        const auto v1 = router::computeHgsFitness(setup.catalog, v1Members, options.nClose, options.nElite);
-        bool matches = v1.size() == v2.size();
-        for (std::size_t index = 0; matches && index < v2.size(); ++index)
-        {
-            matches = near(v2[index], v1[index].biasedFitness);
-        }
-        expect(matches, "biased fitness from cached distances must match v1 recomputation");
     }
 
     void testDistanceCacheAndSurvivors()
@@ -278,9 +249,8 @@ namespace
 
 int main()
 {
-    testBrokenPairsAgainstV1();
+    testBrokenPairs();
     testRanks();
-    testFitnessAgainstV1();
     testDistanceCacheAndSurvivors();
     testBestFeasibleTracking();
     testPenaltiesRetentionAndParents();

@@ -37,7 +37,6 @@ add_library(router_core
     src/insertion.cpp
     src/solomon_i1.cpp
     src/local_search.cpp
-    src/hgs.cpp
     src/hgs/problem_data.cpp
     src/hgs/cost_model.cpp
     src/hgs/search_context.cpp
@@ -81,14 +80,11 @@ target_link_libraries(run_ls PRIVATE router_core nlohmann_json::nlohmann_json)
 add_executable(run_hgs apps/run_hgs.cpp)
 target_link_libraries(run_hgs PRIVATE router_core nlohmann_json::nlohmann_json)
 
-add_executable(bench_hgs_split apps/bench_hgs_split.cpp)
-target_link_libraries(bench_hgs_split PRIVATE router_core)
+add_executable(bench_split apps/bench_split.cpp)
+target_link_libraries(bench_split PRIVATE router_core)
 
-add_executable(bench_split_v2 apps/bench_split_v2.cpp)
-target_link_libraries(bench_split_v2 PRIVATE router_core)
-
-add_executable(bench_local_search_v2 apps/bench_local_search_v2.cpp)
-target_link_libraries(bench_local_search_v2 PRIVATE router_core)
+add_executable(bench_local_search apps/bench_local_search.cpp)
+target_link_libraries(bench_local_search PRIVATE router_core)
 
 option(WITH_ORTOOLS "Build the OR-Tools comparison bridge (run_ortools)" OFF)
 
@@ -108,9 +104,6 @@ if(BUILD_TESTING)
     add_executable(test_local_search tests/test_local_search.cpp)
     target_link_libraries(test_local_search PRIVATE router_core)
 
-    add_executable(test_hgs tests/test_hgs.cpp)
-    target_link_libraries(test_hgs PRIVATE router_core)
-
     add_test(NAME zones COMMAND test_zones)
     add_test(
         NAME local_search
@@ -118,7 +111,6 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/../data/instances/C_D1_n20_loose_s42_instance.json"
             "${PROJECT_SOURCE_DIR}/../data/instances/R_D1_n100_tight_s42_instance.json"
     )
-    add_test(NAME hgs COMMAND test_hgs)
 
     set(HGS_TEST_MODULES
         problem_data

@@ -4,7 +4,6 @@
 #include <vector>
 
 #include "hgs/test_support.hpp"
-#include "router/hgs.hpp"
 #include "router/hgs/crossover.hpp"
 #include "router/hgs/individual.hpp"
 
@@ -13,26 +12,6 @@ using hgs_test::expectInvalidArgument;
 
 namespace
 {
-    std::vector<router::HgsGene> toGenes(const std::vector<int> &tour)
-    {
-        std::vector<router::HgsGene> genes;
-        for (int visit : tour)
-        {
-            genes.push_back({static_cast<std::size_t>(visit) - 1});
-        }
-        return genes;
-    }
-
-    std::vector<int> fromGenes(const std::vector<router::HgsGene> &genes)
-    {
-        std::vector<int> tour;
-        for (const auto &gene : genes)
-        {
-            tour.push_back(static_cast<int>(gene.visitIndex) + 1);
-        }
-        return tour;
-    }
-
     std::vector<int> randomTour(std::mt19937 &rng, std::size_t count)
     {
         std::vector<int> tour(count);
@@ -41,11 +20,25 @@ namespace
         return tour;
     }
 
-    void testAgainstV1()
+    std::vector<int> fillOrder(const std::vector<int> &second, const std::vector<int> &segment, std::size_t end)
+    {
+        std::vector<int> order;
+        for (std::size_t offset = 0; offset < second.size(); ++offset)
+        {
+            const int visit = second[(end + offset) % second.size()];
+            if (std::find(segment.begin(), segment.end(), visit) == segment.end())
+            {
+                order.push_back(visit);
+            }
+        }
+        return order;
+    }
+
+    void testOrderedCrossoverDefinition()
     {
         std::mt19937 rng(600);
-        bool matches = true;
         bool keepsSegment = true;
+        bool followsSecondParent = true;
         bool permutations = true;
         for (int trial = 0; trial < 2000; ++trial)
         {
@@ -59,28 +52,30 @@ namespace
             const std::size_t end = std::max(a, b) + 1;
 
             const auto child = router::hgs::orderedCrossover(first, second, begin, end);
-            matches = matches && child == fromGenes(router::orderedCrossover(toGenes(first), toGenes(second), begin, end));
+            const std::vector<int> segment(first.begin() + static_cast<std::ptrdiff_t>(begin),
+                                           first.begin() + static_cast<std::ptrdiff_t>(end));
+            std::vector<int> filled;
+            for (std::size_t offset = 0; offset < count - segment.size(); ++offset)
+            {
+                filled.push_back(child[(end + offset) % count]);
+            }
+
             permutations = permutations && router::hgs::isCompletePermutation(child, count);
-            keepsSegment = keepsSegment && std::equal(child.begin() + static_cast<std::ptrdiff_t>(begin),
-                                                      child.begin() + static_cast<std::ptrdiff_t>(end),
-                                                      first.begin() + static_cast<std::ptrdiff_t>(begin));
+            keepsSegment = keepsSegment && std::equal(segment.begin(), segment.end(),
+                                                      child.begin() + static_cast<std::ptrdiff_t>(begin));
+            followsSecondParent = followsSecondParent && filled == fillOrder(second, segment, end);
         }
-        expect(matches, "ordered crossover must match v1 for every cut");
         expect(permutations, "offspring must be complete permutations");
         expect(keepsSegment, "offspring must keep the first parent's segment in place");
+        expect(followsSecondParent,
+               "positions after the segment must follow the second parent's order starting after the segment");
 
-        router::hgs::Rng v2Rng(601);
-        std::mt19937 v1Rng(601);
-        bool randomCutsMatch = true;
-        for (int trial = 0; trial < 200; ++trial)
-        {
-            const auto first = randomTour(rng, 25);
-            const auto second = randomTour(rng, 25);
-            randomCutsMatch = randomCutsMatch &&
-                              router::hgs::orderedCrossover(first, second, v2Rng) ==
-                                  fromGenes(router::orderedCrossover(toGenes(first), toGenes(second), v1Rng));
-        }
-        expect(randomCutsMatch, "random cuts must be drawn exactly like v1");
+        router::hgs::Rng firstRng(601);
+        router::hgs::Rng secondRng(601);
+        const auto first = randomTour(rng, 25);
+        const auto second = randomTour(rng, 25);
+        expect(router::hgs::orderedCrossover(first, second, firstRng) == router::hgs::orderedCrossover(first, second, secondRng),
+               "random cuts must be reproducible with the same seed");
     }
 
     void testValidation()
@@ -92,12 +87,14 @@ namespace
         expectInvalidArgument([&]() { router::hgs::orderedCrossover(parent, {1, 2, 2, 4}, 0, 1); }, "non-permutation parents must be rejected");
         router::hgs::Rng rng(1);
         expect(router::hgs::orderedCrossover({}, {}, rng).empty(), "empty parents must give an empty child");
+        expect(router::hgs::orderedCrossover({1, 2, 3, 4, 5}, {5, 4, 3, 2, 1}, 1, 3) == std::vector<int>({4, 2, 3, 1, 5}),
+               "a hand-worked example must fill from the second parent after the segment");
     }
 }
 
 int main()
 {
-    testAgainstV1();
+    testOrderedCrossoverDefinition();
     testValidation();
     return hgs_test::finish("hgs crossover");
 }

@@ -2,13 +2,13 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <set>
 #include <vector>
 
 #include "router/hgs/cost_model.hpp"
 #include "router/hgs/problem_data.hpp"
 #include "router/hgs/route_summary.hpp"
 #include "hgs/test_support.hpp"
-#include "router/hgs.hpp"
 #include "router/solution.hpp"
 #include "router/split.hpp"
 #include "router/validate.hpp"
@@ -110,9 +110,57 @@ namespace
         expect(insertionsMatch, "prefix + visit + suffix must equal evaluating the expanded route");
     }
 
-    void testAgainstV1SegmentEvaluation()
+    struct ForwardRoute
+    {
+        double distance = 0.0;
+        double timeWarp = 0.0;
+        double weight = 0.0;
+        double volume = 0.0;
+        int zoneExcess = 0;
+    };
+
+    ForwardRoute simulateForward(
+        const router::Instance &inst,
+        const std::vector<router::Visit> &catalog,
+        const std::vector<int> &zoneOf,
+        const std::vector<int> &route)
+    {
+        ForwardRoute result;
+        std::set<int> zones;
+        double clock = 0.0;
+        std::size_t node = 0;
+        for (int visit : route)
+        {
+            const router::Visit &chunk = catalog[static_cast<std::size_t>(visit) - 1];
+            const auto next = static_cast<std::size_t>(chunk.nodeIndex);
+            const router::Node &customer = inst.nodes[next];
+            result.distance += inst.distanceMatrix[node][next];
+            double arrival = clock + inst.durationMatrix[node][next];
+            if (arrival < customer.twStart)
+            {
+                arrival = customer.twStart;
+            }
+            else if (arrival > customer.twEnd)
+            {
+                result.timeWarp += arrival - customer.twEnd;
+                arrival = customer.twEnd;
+            }
+            clock = arrival + customer.serviceTime;
+            result.weight += chunk.weight;
+            result.volume += chunk.volume;
+            zones.insert(zoneOf[next]);
+            node = next;
+        }
+        result.distance += inst.distanceMatrix[node][0];
+        result.timeWarp += std::max(0.0, clock + inst.durationMatrix[node][0] - inst.horizon);
+        result.zoneExcess = zones.empty() ? 0 : static_cast<int>(zones.size()) - 1;
+        return result;
+    }
+
+    void testAgainstForwardSimulation()
     {
         bool matches = true;
+        int lateRoutes = 0;
         for (std::uint32_t seed = 20; seed < 30; ++seed)
         {
             const router::Instance inst = hgs_test::makeRandomInstance(seed, {.customers = 40, .minWindow = 300.0, .maxWindow = 3600.0});
@@ -123,22 +171,19 @@ namespace
 
             for (const auto &route : hgs_test::makeConflictFreeRoutes(rng, catalog, 0.1))
             {
-                std::vector<router::HgsGene> genes;
-                for (int visit : route)
-                {
-                    genes.push_back({static_cast<std::size_t>(visit) - 1});
-                }
-                const auto v1 = router::evaluateGiantTourSegment(inst, catalog, genes, 0, genes.size(), zoneOf);
-                const auto cost = router::hgs::routeCost(data, router::hgs::summarizeRoute(data, route));
+                const ForwardRoute expected = simulateForward(inst, catalog, zoneOf, route);
+                const RouteSummary summary = router::hgs::summarizeRoute(data, route);
                 matches = matches &&
-                          near(cost.distance, v1.distanceCost, 1e-9) &&
-                          near(cost.timeWarp, v1.violations.timeWarp, 1e-9) &&
-                          near(cost.weightExcess, v1.violations.weightExcess, 1e-9) &&
-                          near(cost.volumeExcess, v1.violations.volumeExcess, 1e-9) &&
-                          cost.zoneExcess == v1.routeZoneExcess;
+                          near(summary.distance, expected.distance, 1e-9) &&
+                          near(summary.timeWarp, expected.timeWarp, 1e-9) &&
+                          near(summary.weight, expected.weight, 1e-9) &&
+                          near(summary.volume, expected.volume, 1e-9) &&
+                          router::hgs::zoneExcess(summary) == expected.zoneExcess;
+                lateRoutes += expected.timeWarp > 0.0;
             }
         }
-        expect(matches, "route summaries must match v1 segment evaluation on distance, load, time warp and zones");
+        expect(lateRoutes > 0, "the forward simulation check must include routes with time warp");
+        expect(matches, "route summaries must match a stop-by-stop simulation on distance, time warp, load and zones");
     }
 
     void testAgainstValidator()
@@ -218,7 +263,7 @@ int main()
 {
     testAssociativity();
     testPrefixSuffixComposition();
-    testAgainstV1SegmentEvaluation();
+    testAgainstForwardSimulation();
     testAgainstValidator();
     testCostModel();
     return hgs_test::finish("hgs route_summary");

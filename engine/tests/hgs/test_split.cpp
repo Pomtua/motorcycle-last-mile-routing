@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "hgs/test_support.hpp"
-#include "router/hgs.hpp"
 #include "router/hgs/cost_model.hpp"
 #include "router/hgs/individual.hpp"
 #include "router/hgs/route_summary.hpp"
@@ -113,47 +112,6 @@ namespace
         expect(failuresMatched > 0, "the brute-force check must include tours with no valid partition");
     }
 
-    void testAgainstV1()
-    {
-        bool matches = true;
-        for (std::uint32_t seed = 240; seed < 250; ++seed)
-        {
-            router::Instance inst = hgs_test::makeRandomInstance(seed, {.customers = 60, .minWindow = 900.0, .maxWindow = 7200.0});
-            inst.fleet.size = 12 + static_cast<int>(seed % 10);
-            const auto catalog = router::splitCustomers(inst);
-            const std::vector<int> zoneOf = hgs_test::makeRandomZones(seed, inst, 8);
-            const double zonePenalty = 75.0;
-            const router::hgs::ProblemData data(inst, catalog, {zoneOf, zonePenalty, 20});
-            const router::hgs::Penalties penalties{20.0, 5000.0, 1.5};
-            std::mt19937 rng(seed);
-            for (int trial = 0; trial < 10; ++trial)
-            {
-                const auto tour = shuffledTour(rng, data.visitCount());
-                std::vector<router::HgsGene> genes;
-                for (int visit : tour)
-                {
-                    genes.push_back({static_cast<std::size_t>(visit) - 1});
-                }
-
-                std::optional<double> v1Cost;
-                try
-                {
-                    v1Cost = router::decodeGiantTour(
-                                 inst, catalog, genes, {penalties.weight, penalties.volume, penalties.timeWarp},
-                                 zoneOf, zonePenalty)
-                                 .evaluation.penalizedCost;
-                }
-                catch (const router::HgsSplitFailure &)
-                {
-                }
-                const auto decoded = router::hgs::split(data, tour, penalties);
-                matches = matches && v1Cost.has_value() == decoded.has_value() &&
-                          (!decoded || near(router::hgs::penalizedCost(data, decoded->cost, penalties), *v1Cost, 1e-9));
-            }
-        }
-        expect(matches, "Split v2 must reach the same penalized cost as v1 on random tours");
-    }
-
     void testNeverWorseThanSourceRoutes()
     {
         const router::Instance inst = hgs_test::makeRandomInstance(260, {.customers = 50});
@@ -209,7 +167,6 @@ namespace
 int main()
 {
     testOptimalAgainstBruteForce();
-    testAgainstV1();
     testNeverWorseThanSourceRoutes();
     testEdgeCases();
     return hgs_test::finish("hgs split");

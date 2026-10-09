@@ -9,11 +9,11 @@
 #include <string>
 #include <vector>
 
-#include "router/hgs.hpp"
 #include "router/hgs/cost_model.hpp"
 #include "router/hgs/individual.hpp"
 #include "router/hgs/local_search.hpp"
 #include "router/hgs/moves.hpp"
+#include "router/hgs/penalty_controller.hpp"
 #include "router/hgs/problem_data.hpp"
 #include "router/hgs/search_context.hpp"
 #include "router/hgs/split.hpp"
@@ -32,25 +32,20 @@ namespace
 
 int main(int argc, char **argv)
 {
-    if (argc < 2 || argc > 5)
+    if (argc < 2 || argc > 4)
     {
-        std::cerr << "usage: bench_local_search_v2 <instance.json> [tours] [--skip-v1] [--moves=a,b,c]\n";
+        std::cerr << "usage: bench_local_search <instance.json> [tours] [--moves=a,b,c]\n";
         return 2;
     }
 
     try
     {
         int tours = 20;
-        bool runV1 = true;
         std::vector<std::string> moveNames{"relocate", "swap", "2-opt*"};
         for (int index = 2; index < argc; ++index)
         {
             const std::string arg = argv[index];
-            if (arg == "--skip-v1")
-            {
-                runV1 = false;
-            }
-            else if (arg.starts_with("--moves="))
+            if (arg.starts_with("--moves="))
             {
                 moveNames.clear();
                 std::stringstream list(arg.substr(8));
@@ -70,11 +65,8 @@ int main(int argc, char **argv)
         }
 
         const router::Instance inst = router::loadInstance(argv[1]);
-        const std::vector<router::Visit> catalog = router::splitCustomers(inst);
-        const router::HgsPenaltyWeights v1Penalties = router::makeInitialHgsPenalties(inst, catalog);
-        const router::hgs::Penalties penalties{
-            v1Penalties.weightPenalty, v1Penalties.volumePenalty, v1Penalties.timeWarpPenalty};
-        const router::hgs::ProblemData data(inst, catalog);
+        const router::hgs::ProblemData data(inst, router::splitCustomers(inst));
+        const router::hgs::Penalties penalties = router::hgs::initialPenalties(data);
         router::hgs::LocalSearch search(data, router::hgs::makeMoves(moveNames));
         router::hgs::Deadline noDeadline;
 
@@ -83,13 +75,10 @@ int main(int argc, char **argv)
         std::iota(tour.begin(), tour.end(), 1);
 
         int decoded = 0;
-        int v2Feasible = 0;
-        int v1Feasible = 0;
+        int feasible = 0;
         double splitCostSum = 0.0;
-        double v2CostSum = 0.0;
-        double v1CostSum = 0.0;
-        double v2Ms = 0.0;
-        double v1Ms = 0.0;
+        double searchCostSum = 0.0;
+        double searchMs = 0.0;
         for (int trial = 0; trial < tours; ++trial)
         {
             std::shuffle(tour.begin(), tour.end(), rng);
@@ -100,24 +89,12 @@ int main(int argc, char **argv)
             }
             ++decoded;
             splitCostSum += router::hgs::penalizedCost(data, individual->cost, penalties);
-            const router::Solution start = router::hgs::toSolution(data, *individual);
 
-            const auto v2Start = Clock::now();
+            const auto start = Clock::now();
             search.run(*individual, penalties, rng, noDeadline);
-            v2Ms += elapsedMs(v2Start, Clock::now());
-            v2CostSum += router::hgs::penalizedCost(data, individual->cost, penalties);
-            v2Feasible += router::hgs::isFeasible(individual->cost);
-
-            if (runV1)
-            {
-                const auto v1Start = Clock::now();
-                const router::HgsIndividual educated = router::educateHgsIndividual(
-                    inst, catalog, router::makeHgsIndividualFromSolution(inst, catalog, start, v1Penalties),
-                    v1Penalties, 100);
-                v1Ms += elapsedMs(v1Start, Clock::now());
-                v1CostSum += educated.evaluation.penalizedCost;
-                v1Feasible += educated.evaluation.feasible;
-            }
+            searchMs += elapsedMs(start, Clock::now());
+            searchCostSum += router::hgs::penalizedCost(data, individual->cost, penalties);
+            feasible += router::hgs::isFeasible(individual->cost);
         }
         if (decoded == 0)
         {
@@ -129,11 +106,11 @@ int main(int argc, char **argv)
         std::cout << "visits              = " << data.visitCount() << "\n";
         std::cout << "decoded tours       = " << decoded << " / " << tours << "\n";
         std::cout << "split avg cost      = " << splitCostSum / decoded << "\n";
-        std::cout << "v2 avg ms           = " << v2Ms / decoded << "\n";
-        std::cout << "v2 avg cost         = " << v2CostSum / decoded << "\n";
-        std::cout << "v2 feasible         = " << v2Feasible << " / " << decoded << "\n";
-        std::cout << "v2 avg passes       = " << static_cast<double>(stats.passes) / decoded << "\n";
-        std::cout << "v2 pairs skipped    = " << stats.pairsSkipped << "\n";
+        std::cout << "search avg ms       = " << searchMs / decoded << "\n";
+        std::cout << "search avg cost     = " << searchCostSum / decoded << "\n";
+        std::cout << "feasible            = " << feasible << " / " << decoded << "\n";
+        std::cout << "avg passes          = " << static_cast<double>(stats.passes) / decoded << "\n";
+        std::cout << "pairs skipped       = " << stats.pairsSkipped << "\n";
         for (const auto &move : search.moves())
         {
             const auto &moveStats = move->stats();
@@ -141,13 +118,6 @@ int main(int argc, char **argv)
                       << " improving=" << moveStats.improving
                       << " conflicts=" << moveStats.rejectedByConflict
                       << " applied=" << moveStats.applied << "\n";
-        }
-        if (runV1)
-        {
-            std::cout << "v1 avg ms (cap 100) = " << v1Ms / decoded << "\n";
-            std::cout << "v1 avg cost         = " << v1CostSum / decoded << "\n";
-            std::cout << "v1 feasible         = " << v1Feasible << " / " << decoded << "\n";
-            std::cout << "speedup             = " << (v2Ms > 0.0 ? v1Ms / v2Ms : 0.0) << "x\n";
         }
         return 0;
     }

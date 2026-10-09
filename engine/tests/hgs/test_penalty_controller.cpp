@@ -3,7 +3,6 @@
 #include <vector>
 
 #include "hgs/test_support.hpp"
-#include "router/hgs.hpp"
 #include "router/hgs/cost_model.hpp"
 #include "router/hgs/penalty_controller.hpp"
 #include "router/hgs/problem_data.hpp"
@@ -27,24 +26,30 @@ namespace
         return cost;
     }
 
-    void testInitialPenaltiesMatchV1()
+    void testInitialPenalties()
     {
-        bool matches = true;
-        for (std::uint32_t seed = 500; seed < 505; ++seed)
+        router::Instance inst;
+        inst.n = 2;
+        inst.horizon = 1000.0;
+        inst.fleet = {2, 20.0, 0.1};
+        inst.nodes.resize(3);
+        for (auto &node : inst.nodes)
         {
-            const router::Instance inst = hgs_test::makeRandomInstance(seed, {.customers = 40});
-            const auto catalog = router::splitCustomers(inst);
-            const router::hgs::ProblemData data(inst, catalog);
-            const Penalties v2 = router::hgs::initialPenalties(data);
-            const router::HgsPenaltyWeights v1 = router::makeInitialHgsPenalties(inst, catalog);
-            matches = matches && hgs_test::near(v2.weight, v1.weightPenalty) &&
-                      hgs_test::near(v2.volume, v1.volumePenalty) &&
-                      hgs_test::near(v2.timeWarp, v1.timeWarpPenalty);
+            node.twEnd = 1000;
         }
-        expect(matches, "initial penalties must match v1 scaling of distance against load and time");
+        inst.nodes[1].serviceTime = 10;
+        inst.nodes[2].serviceTime = 30;
+        inst.distanceMatrix = {{0.0, 40.0, 100.0}, {60.0, 0.0, 20.0}, {80.0, 30.0, 0.0}};
+        inst.durationMatrix = {{0.0, 5.0, 50.0}, {6.0, 0.0, 2.0}, {8.0, 3.0, 0.0}};
+        const std::vector<router::Visit> catalog{{1, 0, 1, 4.0, 0.02}, {2, 0, 1, 10.0, 0.05}};
+        const Penalties computed = router::hgs::initialPenalties(router::hgs::ProblemData(inst, catalog));
+        expect(hgs_test::near(computed.weight, 100.0 / 10.0) &&
+                   hgs_test::near(computed.volume, 100.0 / 0.05) &&
+                   hgs_test::near(computed.timeWarp, 100.0 / 50.0),
+               "initial penalties must scale the longest distance by the largest chunk load and longest time");
 
-        const router::Instance inst = hgs_test::makeRandomInstance(505, {.customers = 10});
-        const router::hgs::ProblemData data(inst, router::splitCustomers(inst));
+        const router::Instance randomInst = hgs_test::makeRandomInstance(505, {.customers = 10});
+        const router::hgs::ProblemData data(randomInst, router::splitCustomers(randomInst));
         PenaltyControlOptions narrow;
         narrow.minPenalty = 2.0;
         narrow.maxPenalty = 4.0;
@@ -118,7 +123,7 @@ namespace
 
 int main()
 {
-    testInitialPenaltiesMatchV1();
+    testInitialPenalties();
     testWindowAndDirection();
     testBounds();
     testValidation();

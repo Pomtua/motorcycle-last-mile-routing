@@ -31,6 +31,7 @@ namespace
     using Clock = std::chrono::steady_clock;
 
     constexpr std::size_t kGranularity = 20;
+    constexpr std::size_t kUnlimitedIterations = std::numeric_limits<std::size_t>::max();
     constexpr double kReserveShare = 0.01;
     constexpr double kMaxReserveMs = 100.0;
 
@@ -111,7 +112,9 @@ namespace
             {"n_elite", config.population.nElite},
             {"granularity", kGranularity},
             {"moves", config.moves},
-            {"max_iterations", config.maxIterations},
+            {"max_iterations", config.maxIterations == kUnlimitedIterations
+                                   ? nlohmann::json(nullptr)
+                                   : nlohmann::json(config.maxIterations)},
             {"max_non_improving_iterations", config.maxNonImprovingIterations},
             {"diversification_interval", config.diversificationInterval},
             {"repair_probability", config.repairProbability},
@@ -183,6 +186,7 @@ int main(int argc, char **argv)
         const char *checkFlag = std::getenv("HGS_CHECK");
         config.checkInvariants = checkFlag != nullptr && std::string(checkFlag) != "0";
         config.traceInterval = tracePath ? 100 : 0;
+        config.maxIterations = kUnlimitedIterations;
 
         double timeLimitSeconds = 1.0;
         if (positionalArgs.size() >= 2)
