@@ -156,16 +156,66 @@ namespace router::hgs
         return summary;
     }
 
-    bool SearchRoutes::hasSiblingInRoute(int visit, int routeIndex) const
+    bool SearchRoutes::hasSiblingInRoute(int visit, int routeIndex, int ignoredVisit) const
     {
         for (int sibling : data_.siblings(visit))
         {
-            if (node(sibling).route == routeIndex)
+            if (sibling != ignoredVisit && node(sibling).route == routeIndex)
             {
                 return true;
             }
         }
         return false;
+    }
+
+    void SearchRoutes::swapNodes(SearchNode &first, SearchNode &second)
+    {
+        if (first.next == &second)
+        {
+            moveAfter(first, second);
+            return;
+        }
+        if (second.next == &first)
+        {
+            moveAfter(second, first);
+            return;
+        }
+        SearchNode &beforeFirst = *first.prev;
+        SearchNode &beforeSecond = *second.prev;
+        moveAfter(first, beforeSecond);
+        moveAfter(second, beforeFirst);
+    }
+
+    void SearchRoutes::exchangeTails(SearchNode &first, SearchNode &second)
+    {
+        SearchRoute &firstRoute = route(first.route);
+        SearchRoute &secondRoute = route(second.route);
+        std::vector<SearchNode *> firstTail;
+        for (SearchNode *linked = first.next; linked != &firstRoute.end; linked = linked->next)
+        {
+            firstTail.push_back(linked);
+        }
+        std::vector<SearchNode *> secondTail;
+        for (SearchNode *linked = second.next; linked != &secondRoute.end; linked = linked->next)
+        {
+            secondTail.push_back(linked);
+        }
+
+        const auto relink = [](SearchNode &head, const std::vector<SearchNode *> &tail, SearchNode &end)
+        {
+            SearchNode *previous = &head;
+            for (SearchNode *linked : tail)
+            {
+                linked->route = head.route;
+                linked->prev = previous;
+                previous->next = linked;
+                previous = linked;
+            }
+            previous->next = &end;
+            end.prev = previous;
+        };
+        relink(first, secondTail, firstRoute.end);
+        relink(second, firstTail, secondRoute.end);
     }
 
     void SearchRoutes::moveAfter(SearchNode &moved, SearchNode &after)

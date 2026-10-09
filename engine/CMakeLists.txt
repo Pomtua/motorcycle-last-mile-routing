@@ -115,7 +115,7 @@ if(BUILD_TESTING)
     )
     add_test(NAME hgs COMMAND test_hgs)
 
-    foreach(hgs_test_name problem_data route_summary search_context individual split local_search)
+    foreach(hgs_test_name problem_data route_summary search_context individual split local_search moves)
         add_executable(test_hgs_${hgs_test_name} tests/hgs/test_${hgs_test_name}.cpp)
         target_include_directories(test_hgs_${hgs_test_name} PRIVATE tests)
         target_link_libraries(test_hgs_${hgs_test_name} PRIVATE router_core)

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,9 +32,9 @@ namespace
 
 int main(int argc, char **argv)
 {
-    if (argc < 2 || argc > 4)
+    if (argc < 2 || argc > 5)
     {
-        std::cerr << "usage: bench_local_search_v2 <instance.json> [tours] [--skip-v1]\n";
+        std::cerr << "usage: bench_local_search_v2 <instance.json> [tours] [--skip-v1] [--moves=a,b,c]\n";
         return 2;
     }
 
@@ -41,12 +42,22 @@ int main(int argc, char **argv)
     {
         int tours = 20;
         bool runV1 = true;
+        std::vector<std::string> moveNames{"relocate", "swap", "2-opt*"};
         for (int index = 2; index < argc; ++index)
         {
             const std::string arg = argv[index];
             if (arg == "--skip-v1")
             {
                 runV1 = false;
+            }
+            else if (arg.starts_with("--moves="))
+            {
+                moveNames.clear();
+                std::stringstream list(arg.substr(8));
+                for (std::string name; std::getline(list, name, ',');)
+                {
+                    moveNames.push_back(name);
+                }
             }
             else
             {
@@ -64,7 +75,7 @@ int main(int argc, char **argv)
         const router::hgs::Penalties penalties{
             v1Penalties.weightPenalty, v1Penalties.volumePenalty, v1Penalties.timeWarpPenalty};
         const router::hgs::ProblemData data(inst, catalog);
-        router::hgs::LocalSearch search(data, router::hgs::makeMoves({"relocate"}));
+        router::hgs::LocalSearch search(data, router::hgs::makeMoves(moveNames));
         router::hgs::Deadline noDeadline;
 
         std::mt19937 rng(42);
@@ -114,7 +125,6 @@ int main(int argc, char **argv)
         }
 
         const auto &stats = search.stats();
-        const auto &relocate = search.moves().front()->stats();
         std::cout << "instance            = " << argv[1] << "\n";
         std::cout << "visits              = " << data.visitCount() << "\n";
         std::cout << "decoded tours       = " << decoded << " / " << tours << "\n";
@@ -124,10 +134,14 @@ int main(int argc, char **argv)
         std::cout << "v2 feasible         = " << v2Feasible << " / " << decoded << "\n";
         std::cout << "v2 avg passes       = " << static_cast<double>(stats.passes) / decoded << "\n";
         std::cout << "v2 pairs skipped    = " << stats.pairsSkipped << "\n";
-        std::cout << "relocate evaluated  = " << relocate.evaluated << "\n";
-        std::cout << "relocate improving  = " << relocate.improving << "\n";
-        std::cout << "relocate conflicts  = " << relocate.rejectedByConflict << "\n";
-        std::cout << "relocate applied    = " << relocate.applied << "\n";
+        for (const auto &move : search.moves())
+        {
+            const auto &moveStats = move->stats();
+            std::cout << "move " << move->name() << ": evaluated=" << moveStats.evaluated
+                      << " improving=" << moveStats.improving
+                      << " conflicts=" << moveStats.rejectedByConflict
+                      << " applied=" << moveStats.applied << "\n";
+        }
         if (runV1)
         {
             std::cout << "v1 avg ms (cap 100) = " << v1Ms / decoded << "\n";

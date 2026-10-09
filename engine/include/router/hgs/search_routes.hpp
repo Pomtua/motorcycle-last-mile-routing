@@ -59,9 +59,11 @@ namespace router::hgs
         double cost(const RouteSummary &summary) const { return penalizedCost(data_, summary, penalties_); }
         double totalCost() const;
         RouteSummary summaryBetween(const SearchNode &first, const SearchNode &last) const;
-        bool hasSiblingInRoute(int visit, int route) const;
+        bool hasSiblingInRoute(int visit, int route, int ignoredVisit = ProblemData::kDepot) const;
 
         void moveAfter(SearchNode &node, SearchNode &after);
+        void swapNodes(SearchNode &first, SearchNode &second);
+        void exchangeTails(SearchNode &first, SearchNode &second);
         void update(SearchRoute &route);
         void checkInvariants() const;
 

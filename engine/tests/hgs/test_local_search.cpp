@@ -2,21 +2,20 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <random>
-#include <stdexcept>
+#include <string>
 #include <vector>
 
-#include "hgs/test_support.hpp"
+#include "hgs/search_test_support.hpp"
 #include "router/hgs/cost_model.hpp"
 #include "router/hgs/individual.hpp"
 #include "router/hgs/local_search.hpp"
 #include "router/hgs/moves.hpp"
 #include "router/hgs/problem_data.hpp"
-#include "router/hgs/route_summary.hpp"
 #include "router/hgs/search_context.hpp"
 #include "router/hgs/search_routes.hpp"
 #include "router/hgs/split.hpp"
-#include "router/split.hpp"
 
 using hgs_test::expect;
 using router::hgs::Individual;
@@ -27,85 +26,21 @@ using router::hgs::SearchRoutes;
 
 namespace
 {
-    struct Fixture
-    {
-        router::Instance inst;
-        std::vector<router::Visit> catalog;
-        std::vector<int> zoneOf;
-    };
+    const std::vector<std::string> kAllMoves{"relocate", "swap", "2-opt*"};
 
-    Fixture makeFixture(std::uint32_t seed, int customers, int zones)
-    {
-        Fixture fixture;
-        fixture.inst = hgs_test::makeRandomInstance(seed, {.customers = customers, .minWindow = 900.0, .maxWindow = 7200.0});
-        fixture.catalog = router::splitCustomers(fixture.inst);
-        if (zones > 0)
-        {
-            fixture.zoneOf = hgs_test::makeRandomZones(seed, fixture.inst, zones);
-        }
-        return fixture;
-    }
-
-    std::vector<std::vector<int>> snapshot(const SearchRoutes &routes)
-    {
-        std::vector<std::vector<int>> lists(static_cast<std::size_t>(routes.routeCount()));
-        for (int index = 0; index < routes.routeCount(); ++index)
-        {
-            const auto &route = routes.route(index);
-            for (const SearchNode *node = route.start.next; node != &route.end; node = node->next)
-            {
-                lists[static_cast<std::size_t>(index)].push_back(node->visit);
-            }
-        }
-        return lists;
-    }
-
-    double totalCost(const ProblemData &data, const std::vector<std::vector<int>> &lists, const Penalties &penalties)
-    {
-        double total = 0.0;
-        for (const auto &list : lists)
-        {
-            total += router::hgs::penalizedCost(data, router::hgs::summarizeRoute(data, list), penalties);
-        }
-        return total;
-    }
-
-    std::vector<std::vector<int>> relocated(std::vector<std::vector<int>> lists, int visit, const SearchNode &target)
-    {
-        for (auto &list : lists)
-        {
-            list.erase(std::remove(list.begin(), list.end(), visit), list.end());
-        }
-        auto &destination = lists[static_cast<std::size_t>(target.route)];
-        const auto at = target.isDepot()
-                            ? destination.begin()
-                            : std::find(destination.begin(), destination.end(), target.visit) + 1;
-        destination.insert(at, visit);
-        return lists;
-    }
-
-    std::vector<const SearchNode *> allTargets(const SearchRoutes &routes)
-    {
-        std::vector<const SearchNode *> targets;
-        for (int visit = 1; visit <= static_cast<int>(routes.data().visitCount()); ++visit)
-        {
-            targets.push_back(&routes.node(visit));
-        }
-        for (int index = 0; index < routes.routeCount(); ++index)
-        {
-            targets.push_back(&routes.route(index).start);
-        }
-        return targets;
-    }
-
-    Individual randomIndividual(const ProblemData &data, const Fixture &fixture, std::mt19937 &rng, double newRouteProbability)
+    Individual randomIndividual(const ProblemData &data, const hgs_test::Fixture &fixture, std::mt19937 &rng, double newRouteProbability)
     {
         return router::hgs::makeIndividual(data, hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, newRouteProbability));
     }
 
+    bool isSibling(const ProblemData &data, int visit, const SearchNode &other)
+    {
+        return !other.isDepot() && data.visit(other.visit).node == data.visit(visit).node;
+    }
+
     void testLoadAndExport()
     {
-        const Fixture fixture = makeFixture(300, 30, 4);
+        const hgs_test::Fixture fixture = hgs_test::makeFixture(300, 30, 4);
         const ProblemData data(fixture.inst, fixture.catalog, {fixture.zoneOf, 60.0, 20});
         const Penalties penalties{15.0, 3000.0, 2.0};
         std::mt19937 rng(300);
@@ -113,16 +48,7 @@ namespace
 
         SearchRoutes routes(data);
         routes.load(individual, penalties);
-        bool consistent = true;
-        try
-        {
-            routes.checkInvariants();
-        }
-        catch (const std::logic_error &)
-        {
-            consistent = false;
-        }
-        expect(consistent, "loaded routes must satisfy every cached-summary invariant");
+        expect(hgs_test::invariantsHold(routes), "loaded routes must satisfy every cached-summary invariant");
         expect(routes.exportRoutes() == individual.routes, "export must return the loaded routes in order");
         expect(hgs_test::near(routes.totalCost(), router::hgs::penalizedCost(data, individual.cost, penalties)),
                "cached route costs must add up to the individual's penalized cost");
@@ -132,14 +58,16 @@ namespace
         hgs_test::expectInvalidArgument([&]() { routes.load(broken, penalties); }, "loading duplicated visits must be rejected");
     }
 
-    void testRelocateDeltaAgainstFullEvaluation()
+    void testRelocateAgainstFullEvaluation()
     {
         bool deltasMatch = true;
+        bool conflictsMatch = true;
         bool noOpsOnlyWhenExpected = true;
         std::size_t checked = 0;
+        std::size_t conflicting = 0;
         for (std::uint32_t seed = 310; seed < 320; ++seed)
         {
-            Fixture fixture = makeFixture(seed, 12, seed % 2 == 0 ? 3 : 0);
+            hgs_test::Fixture fixture = hgs_test::makeFixture(seed, 12, seed % 2 == 0 ? 3 : 0);
             std::mt19937 rng(seed);
             const auto lists = hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, 0.3);
             fixture.inst.fleet.size = static_cast<int>(lists.size()) + 2;
@@ -148,13 +76,13 @@ namespace
 
             SearchRoutes routes(data);
             routes.load(router::hgs::makeIndividual(data, lists), penalties);
-            const auto current = snapshot(routes);
-            const double before = totalCost(data, current, penalties);
+            const auto current = hgs_test::snapshot(routes);
+            const double before = hgs_test::totalCost(data, current, penalties);
 
             for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
             {
                 const SearchNode &u = routes.node(visit);
-                for (const SearchNode *target : allTargets(routes))
+                for (const SearchNode *target : hgs_test::allTargets(routes))
                 {
                     const auto delta = router::hgs::Relocate::evaluate(u, *target, routes);
                     if (!delta)
@@ -162,20 +90,25 @@ namespace
                         noOpsOnlyWhenExpected = noOpsOnlyWhenExpected && (target == &u || target->next == &u);
                         continue;
                     }
-                    const double expected = totalCost(data, relocated(current, visit, *target), penalties) - before;
+                    const auto after = hgs_test::relocated(current, visit, *target);
+                    const double expected = hgs_test::totalCost(data, after, penalties) - before;
                     deltasMatch = deltasMatch && std::abs(*delta - expected) <= 1e-9 * std::max(1.0, before);
+                    const bool expectedConflict = hgs_test::hasCustomerConflict(data, after);
+                    conflictsMatch = conflictsMatch && router::hgs::Relocate::conflicts(u, *target, routes) == expectedConflict;
+                    conflicting += expectedConflict;
                     ++checked;
                 }
             }
         }
-        expect(checked > 1000, "the relocate delta check must cover many moves");
+        expect(checked > 1000 && conflicting > 0, "the relocate check must cover many moves including conflicts");
         expect(deltasMatch, "relocate deltas must equal full re-evaluation for every visit and position");
+        expect(conflictsMatch, "relocate conflict detection must match the resulting routes");
         expect(noOpsOnlyWhenExpected, "relocate must only skip moves that leave the route unchanged");
     }
 
     void testRelocateApplyKeepsInvariants()
     {
-        const Fixture fixture = makeFixture(330, 40, 5);
+        const hgs_test::Fixture fixture = hgs_test::makeFixture(330, 40, 5);
         const ProblemData data(fixture.inst, fixture.catalog, {fixture.zoneOf, 40.0, 20});
         const Penalties penalties{20.0, 4000.0, 1.0};
         std::mt19937 rng(330);
@@ -196,14 +129,7 @@ namespace
                 continue;
             }
             costsDecrease = costsDecrease && routes.totalCost() < before - router::hgs::kImprovementEpsilon / 2.0;
-            try
-            {
-                routes.checkInvariants();
-            }
-            catch (const std::logic_error &)
-            {
-                invariantsHold = false;
-            }
+            invariantsHold = invariantsHold && hgs_test::invariantsHold(routes);
         }
         const auto &stats = relocate.stats();
         expect(stats.applied > 0 && stats.applied + stats.rejectedByConflict == stats.improving,
@@ -213,6 +139,41 @@ namespace
         expect(costsDecrease, "every applied relocate must strictly reduce the penalized cost");
     }
 
+    bool noImprovingMoveLeft(const ProblemData &data, const SearchRoutes &routes)
+    {
+        const auto improving = [](const std::optional<double> &delta)
+        { return delta && *delta < -router::hgs::kImprovementEpsilon; };
+
+        for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
+        {
+            const SearchNode &u = routes.node(visit);
+            for (const SearchNode *target : hgs_test::allTargets(routes))
+            {
+                if (improving(router::hgs::Relocate::evaluate(u, *target, routes)) &&
+                    !router::hgs::Relocate::conflicts(u, *target, routes))
+                {
+                    return false;
+                }
+
+                const bool cutBeforeSibling = target->next != nullptr && isSibling(data, visit, *target->next) && target->isDepot();
+                if (!isSibling(data, visit, *target) && !cutBeforeSibling &&
+                    improving(router::hgs::TwoOptStar::evaluate(u, *target, routes)) &&
+                    !router::hgs::TwoOptStar::conflicts(u, *target, routes))
+                {
+                    return false;
+                }
+
+                if (!target->isDepot() && !isSibling(data, visit, *target) &&
+                    improving(router::hgs::Swap::evaluate(u, *target, routes)) &&
+                    !router::hgs::Swap::conflicts(u, *target, routes))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     void testLocalSearchReachesLocalOptimum()
     {
         bool optimal = true;
@@ -220,7 +181,7 @@ namespace
         bool deterministic = true;
         for (std::uint32_t seed = 340; seed < 346; ++seed)
         {
-            const Fixture fixture = makeFixture(seed, 25, seed % 2 == 0 ? 4 : 0);
+            const hgs_test::Fixture fixture = hgs_test::makeFixture(seed, 25, seed % 2 == 0 ? 4 : 0);
             const ProblemData data(
                 fixture.inst, fixture.catalog,
                 {fixture.zoneOf, fixture.zoneOf.empty() ? 0.0 : 50.0, fixture.catalog.size()});
@@ -228,7 +189,7 @@ namespace
             std::mt19937 rng(seed);
             const Individual start = randomIndividual(data, fixture, rng, 0.25);
 
-            router::hgs::LocalSearch search(data, router::hgs::makeMoves({"relocate"}));
+            router::hgs::LocalSearch search(data, router::hgs::makeMoves(kAllMoves));
             search.setInvariantChecks(true);
             router::hgs::Deadline noDeadline;
             Individual improved = start;
@@ -246,31 +207,22 @@ namespace
 
             SearchRoutes routes(data);
             routes.load(improved, penalties);
-            for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
-            {
-                const SearchNode &u = routes.node(visit);
-                for (const SearchNode *target : allTargets(routes))
-                {
-                    const auto delta = router::hgs::Relocate::evaluate(u, *target, routes);
-                    const bool blocked = target->route != u.route && routes.hasSiblingInRoute(visit, target->route);
-                    optimal = optimal && (!delta || *delta >= -router::hgs::kImprovementEpsilon || blocked);
-                }
-            }
+            optimal = optimal && noImprovingMoveLeft(data, routes);
         }
-        expect(optimal, "local search with full neighbourhoods must stop at a relocate local optimum");
+        expect(optimal, "local search with full neighbourhoods must stop where no relocate, swap or 2-opt* improves");
         expect(neverWorse, "local search must never return a worse individual");
         expect(deterministic, "local search must be reproducible with the same random seed");
     }
 
     void testDeadlineAndConfiguration()
     {
-        const Fixture fixture = makeFixture(350, 60, 0);
+        const hgs_test::Fixture fixture = hgs_test::makeFixture(350, 60, 0);
         const ProblemData data(fixture.inst, fixture.catalog);
         const Penalties penalties{5.0, 1000.0, 0.5};
         std::mt19937 rng(350);
         const Individual start = randomIndividual(data, fixture, rng, 0.05);
 
-        router::hgs::LocalSearch search(data, router::hgs::makeMoves({"relocate"}));
+        router::hgs::LocalSearch search(data, router::hgs::makeMoves(kAllMoves));
         router::hgs::Deadline expired(router::hgs::SteadyClock::now() - std::chrono::seconds(1));
         Individual interrupted = start;
         router::hgs::Rng searchRng(350);
@@ -287,7 +239,7 @@ namespace
 
     void testSplitThenSearchImproves()
     {
-        const Fixture fixture = makeFixture(360, 80, 0);
+        const hgs_test::Fixture fixture = hgs_test::makeFixture(360, 80, 0);
         const ProblemData data(fixture.inst, fixture.catalog);
         const Penalties penalties{10.0, 2000.0, 1.0};
         std::mt19937 rng(360);
@@ -297,7 +249,7 @@ namespace
             tour[index] = static_cast<int>(index) + 1;
         }
 
-        router::hgs::LocalSearch search(data, router::hgs::makeMoves({"relocate"}));
+        router::hgs::LocalSearch search(data, router::hgs::makeMoves(kAllMoves));
         router::hgs::Deadline noDeadline;
         bool improves = true;
         for (int trial = 0; trial < 10; ++trial)
@@ -314,13 +266,19 @@ namespace
         }
         expect(improves, "local search must improve Split decodings of random tours");
         expect(search.stats().pairsSkipped > 0, "later passes must skip pairs whose routes did not change");
+        bool everyMoveUsed = true;
+        for (const auto &move : search.moves())
+        {
+            everyMoveUsed = everyMoveUsed && move->stats().applied > 0;
+        }
+        expect(everyMoveUsed, "relocate, swap and 2-opt* must each contribute improvements");
     }
 }
 
 int main()
 {
     testLoadAndExport();
-    testRelocateDeltaAgainstFullEvaluation();
+    testRelocateAgainstFullEvaluation();
     testRelocateApplyKeepsInvariants();
     testLocalSearchReachesLocalOptimum();
     testDeadlineAndConfiguration();

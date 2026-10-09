@@ -42,7 +42,30 @@ namespace router::hgs
         bool tryApply(SearchNode &u, SearchNode &v, SearchRoutes &routes) override;
 
         static std::optional<double> evaluate(const SearchNode &u, const SearchNode &target, const SearchRoutes &routes);
+        static bool conflicts(const SearchNode &u, const SearchNode &target, const SearchRoutes &routes);
         static void apply(SearchNode &u, SearchNode &target, SearchRoutes &routes);
+    };
+
+    class Swap final : public Move
+    {
+    public:
+        std::string_view name() const override { return "swap"; }
+        bool tryApply(SearchNode &u, SearchNode &v, SearchRoutes &routes) override;
+
+        static std::optional<double> evaluate(const SearchNode &u, const SearchNode &v, const SearchRoutes &routes);
+        static bool conflicts(const SearchNode &u, const SearchNode &v, const SearchRoutes &routes);
+        static void apply(SearchNode &u, SearchNode &v, SearchRoutes &routes);
+    };
+
+    class TwoOptStar final : public Move
+    {
+    public:
+        std::string_view name() const override { return "2-opt*"; }
+        bool tryApply(SearchNode &u, SearchNode &v, SearchRoutes &routes) override;
+
+        static std::optional<double> evaluate(const SearchNode &u, const SearchNode &cut, const SearchRoutes &routes);
+        static bool conflicts(const SearchNode &u, const SearchNode &cut, const SearchRoutes &routes);
+        static void apply(SearchNode &u, SearchNode &cut, SearchRoutes &routes);
     };
 
     std::vector<std::unique_ptr<Move>> makeMoves(const std::vector<std::string> &names);
