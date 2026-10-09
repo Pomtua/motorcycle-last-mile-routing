@@ -46,6 +46,9 @@ add_library(router_core
     src/hgs/search_routes.cpp
     src/hgs/moves.cpp
     src/hgs/local_search.cpp
+    src/hgs/penalty_controller.cpp
+    src/hgs/crossover.cpp
+    src/hgs/population.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
@@ -115,7 +118,20 @@ if(BUILD_TESTING)
     )
     add_test(NAME hgs COMMAND test_hgs)
 
-    foreach(hgs_test_name problem_data route_summary search_context individual split local_search moves)
+    set(HGS_TEST_MODULES
+        problem_data
+        route_summary
+        search_context
+        individual
+        split
+        local_search
+        moves
+        penalty_controller
+        crossover
+        population
+    )
+
+    foreach(hgs_test_name IN LISTS HGS_TEST_MODULES)
         add_executable(test_hgs_${hgs_test_name} tests/hgs/test_${hgs_test_name}.cpp)
         target_include_directories(test_hgs_${hgs_test_name} PRIVATE tests)
         target_link_libraries(test_hgs_${hgs_test_name} PRIVATE router_core)
