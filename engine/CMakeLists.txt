@@ -43,6 +43,9 @@ add_library(router_core
     src/hgs/search_context.cpp
     src/hgs/individual.cpp
     src/hgs/split.cpp
+    src/hgs/search_routes.cpp
+    src/hgs/moves.cpp
+    src/hgs/local_search.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
@@ -79,6 +82,9 @@ target_link_libraries(bench_hgs_split PRIVATE router_core)
 add_executable(bench_split_v2 apps/bench_split_v2.cpp)
 target_link_libraries(bench_split_v2 PRIVATE router_core)
 
+add_executable(bench_local_search_v2 apps/bench_local_search_v2.cpp)
+target_link_libraries(bench_local_search_v2 PRIVATE router_core)
+
 option(WITH_ORTOOLS "Build the OR-Tools comparison bridge (run_ortools)" OFF)
 
 if(WITH_ORTOOLS)
@@ -109,7 +115,7 @@ if(BUILD_TESTING)
     )
     add_test(NAME hgs COMMAND test_hgs)
 
-    foreach(hgs_test_name problem_data route_summary search_context individual split)
+    foreach(hgs_test_name problem_data route_summary search_context individual split local_search)
         add_executable(test_hgs_${hgs_test_name} tests/hgs/test_${hgs_test_name}.cpp)
         target_include_directories(test_hgs_${hgs_test_name} PRIVATE tests)
         target_link_libraries(test_hgs_${hgs_test_name} PRIVATE router_core)
