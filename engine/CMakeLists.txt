@@ -49,6 +49,8 @@ add_library(router_core
     src/hgs/penalty_controller.cpp
     src/hgs/crossover.cpp
     src/hgs/population.cpp
+    src/hgs/initial_population.cpp
+    src/hgs/genetic.cpp
 )
 target_include_directories(router_core PUBLIC include)
 target_link_libraries(router_core PUBLIC nlohmann_json::nlohmann_json)
@@ -129,6 +131,7 @@ if(BUILD_TESTING)
         penalty_controller
         crossover
         population
+        genetic
     )
 
     foreach(hgs_test_name IN LISTS HGS_TEST_MODULES)
