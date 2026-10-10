@@ -82,6 +82,7 @@ int main(int argc, char **argv)
                   << " / " << inst.fleet.size << "\n";
 
         const std::size_t chunks = router::splitCustomers(inst).size();
+        runResult["chunk_count"] = chunks;
         std::cout << "chunks         = " << chunks << "\n";
         std::cout << "chunks/route   = "
                   << (sol.routes.empty()
