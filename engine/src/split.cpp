@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace router
 {
@@ -20,71 +21,35 @@ namespace router
             const long long vScaled = std::llround(v * 10000.0);
             const long long wCap = static_cast<long long>(std::floor(wMax * 100.0));
             const long long vCap = static_cast<long long>(std::floor(vMax * 10000.0));
-
-            int m = std::max({1,
-                              static_cast<int>(std::ceil(w / wMax)),
-                              static_cast<int>(std::ceil(v / vMax))});
-
-            std::vector<long long> wChunks;
-            std::vector<long long> vChunks;
-
-            while (true)
+            if (wScaled == 0)
             {
-                wChunks.clear();
-                vChunks.clear();
-
-                if (m == 1)
+                if (v > 0.0)
                 {
-                    wChunks.push_back(wScaled);
-                    vChunks.push_back(vScaled);
+                    throw std::invalid_argument("a customer with volume demand must also have weight demand");
                 }
-                else
-                {
-                    long long wFull = 0;
-                    long long vFull = 0;
-
-                    if (wCap * vScaled <= vCap * wScaled)
-                    {
-                        wFull = wCap;
-                        vFull = (vScaled * wCap) / wScaled;
-                    }
-                    else
-                    {
-                        vFull = vCap;
-                        wFull = (wScaled * vCap) / vScaled;
-                    }
-
-                    wChunks.assign(static_cast<std::size_t>(m - 1), wFull);
-                    vChunks.assign(static_cast<std::size_t>(m - 1), vFull);
-                    wChunks.push_back(wScaled - wFull * (m - 1));
-                    vChunks.push_back(vScaled - vFull * (m - 1));
-                }
-
-                bool fits = true;
-                for (std::size_t i = 0; i < wChunks.size(); ++i)
-                {
-                    if (wChunks[i] > wCap || vChunks[i] > vCap)
-                    {
-                        fits = false;
-                        break;
-                    }
-                }
-                if (fits)
-                {
-                    break;
-                }
-                ++m;
+                return {1, {0.0}, {0.0}};
             }
+            const double volumePerUnit = v / static_cast<double>(wScaled);
+
+            const long long wFull = wCap * vScaled <= vCap * wScaled ? wCap : (wScaled * vCap) / vScaled;
+            if (wFull <= 0)
+            {
+                throw std::invalid_argument("a customer's volume per kilogram leaves no room for 0.01 kg in one vehicle");
+            }
+            const long long m = std::max(1LL, (wScaled + wFull - 1) / wFull);
 
             Chunks out;
-            out.m = m;
-            out.weight.reserve(wChunks.size());
-            out.volume.reserve(vChunks.size());
-            for (std::size_t i = 0; i < wChunks.size(); ++i)
+            out.m = static_cast<int>(m);
+            out.weight.reserve(static_cast<std::size_t>(m));
+            out.volume.reserve(static_cast<std::size_t>(m));
+            for (long long i = 0; i + 1 < m; ++i)
             {
-                out.weight.push_back(static_cast<double>(wChunks[i]) / 100.0);
-                out.volume.push_back(static_cast<double>(vChunks[i]) / 10000.0);
+                out.weight.push_back(static_cast<double>(wFull) / 100.0);
+                out.volume.push_back(static_cast<double>(wFull) * volumePerUnit);
             }
+            const long long wLast = wScaled - wFull * (m - 1);
+            out.weight.push_back(static_cast<double>(wLast) / 100.0);
+            out.volume.push_back(m == 1 ? v : static_cast<double>(wLast) * volumePerUnit);
             return out;
         }
 

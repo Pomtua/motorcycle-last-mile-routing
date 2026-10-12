@@ -41,6 +41,7 @@ namespace
 {
     constexpr double kWeightScale = 100.0;
     constexpr double kVolumeScale = 10000.0;
+    constexpr double kScaleRoundingSlack = 1e-6;
 }
 
 int main(int argc, char **argv)
@@ -216,7 +217,8 @@ int main(int argc, char **argv)
                 {
                     return 0;
                 }
-                return std::llround(chunks[static_cast<std::size_t>(node - 1)].volume * kVolumeScale);
+                return static_cast<int64_t>(
+                    std::ceil(chunks[static_cast<std::size_t>(node - 1)].volume * kVolumeScale - kScaleRoundingSlack));
             });
         const std::vector<int64_t> volumeCapacities(
             static_cast<std::size_t>(inst.fleet.size),

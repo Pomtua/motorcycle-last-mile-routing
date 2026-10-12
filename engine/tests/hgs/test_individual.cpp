@@ -199,7 +199,7 @@ namespace
         expect(coverageViolations(doubled) > 0, "visiting a customer twice in one route must be reported");
     }
 
-    void testValidatorAcceptsRoundedChunks()
+    void testFillFirstChunksMatchHgsVolumes()
     {
         router::Instance inst;
         inst.n = 1;
@@ -218,11 +218,21 @@ namespace
         {
             solution.routes.push_back({{chunk}});
         }
-        const double deviation = std::abs(chunks.front().volume - chunks.front().weight * 0.2 / 3.07);
-        expect(chunks.size() == 2 && deviation > 1e-4,
-               "a low-density customer must produce chunks whose volume is off proportion by more than one volume unit");
-        expect(router::validate(inst, solution).feasible,
-               "fill-first chunks must pass when volume is off proportion only by weight and volume rounding");
+        const router::hgs::ProblemData data(inst, chunks);
+        bool matchesHgs = chunks.size() == 2 && near(chunks.front().weight, 1.91) && near(chunks.back().weight, 1.16);
+        for (const router::Visit &chunk : chunks)
+        {
+            matchesHgs = matchesHgs && chunk.volume <= inst.fleet.volumeCapacity &&
+                         near(chunk.volume, data.volumeOf({1, router::hgs::toUnits(chunk.weight)}), 1e-12);
+        }
+        expect(matchesHgs, "volume-bound fill-first chunks must carry exactly the proportional volume HGS assigns");
+        expect(router::validate(inst, solution).feasible, "proportional fill-first chunks must pass the validator");
+
+        router::Solution gridRounded = solution;
+        gridRounded.routes.front().stops.front().volume += 1e-4;
+        gridRounded.routes.back().stops.front().volume -= 1e-4;
+        expect(!router::validate(inst, gridRounded).feasible,
+               "chunk volumes off proportion by one volume unit must be rejected");
     }
 
     void testDeliverySetCheck()
@@ -248,7 +258,7 @@ int main()
     testQuantitiesNeedNotMatchCanonicalChunks();
     testRejections();
     testQuantityValidator();
-    testValidatorAcceptsRoundedChunks();
+    testFillFirstChunksMatchHgsVolumes();
     testDeliverySetCheck();
     return hgs_test::finish("hgs individual");
 }
