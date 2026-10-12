@@ -256,28 +256,20 @@ class InstanceGenerator:
         v_scaled = int(round(v * 10000))
         w_cap = int(math.floor(w_max * 100))
         v_cap = int(math.floor(v_max * 10000))
+        if w_scaled == 0:
+            if v > 0.0:
+                raise ValueError("a customer with volume demand must also have weight demand")
+            return 1, [0.0], [0.0]
+        volume_per_unit = v / w_scaled
 
-        m = max(1, int(math.ceil(w / w_max)), int(math.ceil(v / v_max)))
+        w_full = w_cap if w_cap * v_scaled <= v_cap * w_scaled else (w_scaled * v_cap) // v_scaled
+        if w_full <= 0:
+            raise ValueError("a customer's volume per kilogram leaves no room for 0.01 kg in one vehicle")
+        m = max(1, -(-w_scaled // w_full))
 
-        while True:
-            if m == 1:
-                w_chunks, v_chunks = [w_scaled], [v_scaled]
-            else:
-                if w_cap * v_scaled <= v_cap * w_scaled:
-                    w_full = w_cap                             
-                    v_full = (v_scaled * w_cap) // w_scaled
-                else:
-                    v_full = v_cap                              
-                    w_full = (w_scaled * v_cap) // v_scaled
-
-                w_chunks = [w_full] * (m - 1) + [w_scaled - w_full * (m - 1)]
-                v_chunks = [v_full] * (m - 1) + [v_scaled - v_full * (m - 1)]
-
-            if all(c <= w_cap for c in w_chunks) and all(c <= v_cap for c in v_chunks):
-                break
-            m += 1
-
-        return m, [c / 100.0 for c in w_chunks], [c / 10000.0 for c in v_chunks]
+        w_chunks = [w_full] * (m - 1) + [w_scaled - w_full * (m - 1)]
+        v_chunks = [c * volume_per_unit for c in w_chunks] if m > 1 else [v]
+        return m, [c / 100.0 for c in w_chunks], v_chunks
     
     def generate_reference_routes(self, depot, customers, demands, w_max, v_max, alpha):
         locations = [depot] + customers
@@ -449,7 +441,7 @@ v_max):
                 served_volumes[visit['osm_id']] += visit['volume']
             if r_w > w_max:
                 raise Exception("Route weight exceeds limit")
-            if r_v > v_max:
+            if r_v > v_max + 1e-9:
                 raise Exception("Route volume exceeds limit")
         for osm_id, w in customer_demands.items():
             if abs(w - served_weights[osm_id]) > 1e-9:
