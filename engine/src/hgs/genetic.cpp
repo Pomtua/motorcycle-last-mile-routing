@@ -35,7 +35,7 @@ namespace router::hgs
                   rng_(config.seed),
                   controller_(initialPenalties(data, config.penaltyControl), config.penaltyControl),
                   population_(data, config.population, controller_.penalties()),
-                  search_(data, makeMoves(config.moves)),
+                  search_(data, makeMoves(effectiveMoves(config))),
                   start_(SteadyClock::now())
             {
                 search_.setInvariantChecks(config.checkInvariants);
@@ -238,6 +238,7 @@ namespace router::hgs
                     result_.moves.emplace_back(std::string(move->name()), move->stats());
                 }
                 result_.population = population_.stats();
+                result_.splits = summarizeSplits(data_, result_.best);
                 return std::move(result_);
             }
 
@@ -266,11 +267,60 @@ namespace router::hgs
         throw std::logic_error("unknown stop reason");
     }
 
+    const char *splitModeName(SplitMode mode)
+    {
+        switch (mode)
+        {
+        case SplitMode::Fixed: return "fixed";
+        case SplitMode::Dynamic: return "dynamic";
+        }
+        throw std::logic_error("unknown split mode");
+    }
+
+    SplitMode parseSplitMode(const std::string &name)
+    {
+        if (name == "fixed")
+        {
+            return SplitMode::Fixed;
+        }
+        if (name == "dynamic")
+        {
+            return SplitMode::Dynamic;
+        }
+        throw std::invalid_argument("split mode must be 'fixed' or 'dynamic'");
+    }
+
+    std::vector<std::string> effectiveMoves(const GeneticConfig &config)
+    {
+        std::vector<std::string> moves = config.moves;
+        if (config.splitMode == SplitMode::Dynamic)
+        {
+            for (const std::string &name : kQuantityMoves)
+            {
+                if (std::find(moves.begin(), moves.end(), name) == moves.end())
+                {
+                    moves.push_back(name);
+                }
+            }
+        }
+        return moves;
+    }
+
     void validateGeneticConfig(const GeneticConfig &config)
     {
+        if (config.splitMode == SplitMode::Fixed)
+        {
+            for (const std::string &name : config.moves)
+            {
+                if (std::find(kQuantityMoves.begin(), kQuantityMoves.end(), name) != kQuantityMoves.end())
+                {
+                    throw std::invalid_argument("fixed split mode cannot use quantity move " + name);
+                }
+            }
+        }
         validatePopulationOptions(config.population);
         validatePenaltyControlOptions(config.penaltyControl);
-        makeMoves(config.moves);
+        makeMoves(effectiveMoves(config));
         if (config.maxNonImprovingIterations == 0 ||
             !isFraction(config.repairProbability) ||
             !std::isfinite(config.repairPenaltyFactor) || config.repairPenaltyFactor < 1.0 ||

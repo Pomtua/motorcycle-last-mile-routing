@@ -27,6 +27,7 @@ namespace router::hgs
         std::vector<int> zoneOf;
         double zonePenalty = 0.0;
         std::size_t granularity = 20;
+        double minDeliveryFraction = 0.0;
     };
 
     class ProblemData
@@ -55,6 +56,8 @@ namespace router::hgs
         }
 
         const std::vector<int> &neighbours(int customer) const { return neighbours_[static_cast<std::size_t>(customer)]; }
+        std::int64_t minDeliveryUnits(int customer) const { return minDeliveryUnits_[static_cast<std::size_t>(customer)]; }
+        double minDeliveryFraction() const { return minDeliveryFraction_; }
 
         int fleetSize() const { return fleetSize_; }
         double weightCapacity() const { return weightCapacity_; }
@@ -77,11 +80,13 @@ namespace router::hgs
         std::vector<double> distance_;
         std::vector<double> duration_;
         std::vector<std::vector<int>> neighbours_;
+        std::vector<std::int64_t> minDeliveryUnits_;
         int fleetSize_ = 0;
         double weightCapacity_ = 0.0;
         double volumeCapacity_ = 0.0;
         double horizon_ = 0.0;
         double zonePenalty_ = 0.0;
+        double minDeliveryFraction_ = 0.0;
         bool hasZones_ = false;
     };
 }

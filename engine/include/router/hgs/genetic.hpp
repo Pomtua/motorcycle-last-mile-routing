@@ -19,11 +19,21 @@
 
 namespace router::hgs
 {
+    enum class SplitMode
+    {
+        Fixed,
+        Dynamic
+    };
+
+    inline const std::vector<std::string> kRouteMoves{"relocate", "swap", "2-opt*"};
+    inline const std::vector<std::string> kQuantityMoves{"partial-relocate", "transfer", "split-insertion"};
+
     struct GeneticConfig
     {
         std::uint32_t seed = 42;
         PopulationOptions population;
-        std::vector<std::string> moves{"relocate", "swap", "2-opt*"};
+        SplitMode splitMode = SplitMode::Dynamic;
+        std::vector<std::string> moves = kRouteMoves;
         std::size_t maxIterations = 20000;
         std::size_t maxNonImprovingIterations = 5000;
         std::size_t diversificationInterval = 2000;
@@ -46,6 +56,9 @@ namespace router::hgs
     };
 
     const char *stopReasonName(StopReason reason);
+    const char *splitModeName(SplitMode mode);
+    SplitMode parseSplitMode(const std::string &name);
+    std::vector<std::string> effectiveMoves(const GeneticConfig &config);
 
     struct GeneticStats
     {
@@ -91,6 +104,7 @@ namespace router::hgs
         LocalSearchStats localSearch;
         std::vector<std::pair<std::string, MoveStats>> moves;
         PopulationStats population;
+        SplitSummary splits;
     };
 
     void validateGeneticConfig(const GeneticConfig &config);

@@ -95,7 +95,8 @@ namespace
                "each fill must split its attempts between perturbed and random tours");
         expect(first.stats.education.calls > first.stats.iterations && first.localSearch.runs > 0,
                "every split child must be educated");
-        expect(first.moves.size() == 3 && first.population.added > 0, "move and population statistics must be reported");
+        expect(first.moves.size() == 6 && first.population.added > 0,
+               "dynamic mode must report the three route moves plus the three quantity moves");
         expect(first.stats.penaltyUpdates > 0, "a short penalty window must trigger penalty updates");
     }
 
@@ -184,6 +185,41 @@ namespace
                "the zoned objective must add the penalty per extra zone");
     }
 
+    void testSplitModes()
+    {
+        const router::Instance inst = hgs_test::makeClusterFarFromDepot(6, 6);
+        const ProblemData data(inst, router::splitCustomers(inst));
+        const Individual seed = singletonSeed(data);
+
+        GeneticConfig fixedConfig = smallConfig();
+        fixedConfig.splitMode = router::hgs::SplitMode::Fixed;
+        const auto fixed = router::hgs::runGenetic(data, seed, fixedConfig, Deadline{});
+        expect(fixed.moves.size() == 3 && fixed.splits.deliveries == data.tokenCount() &&
+                   fixed.splits.deliveriesMatchingCanonical == data.tokenCount() && fixed.splits.splitCustomers == 0,
+               "fixed mode must keep every canonical chunk unchanged");
+        expect(hgs_test::near(router::hgs::objectiveCost(data, fixed.best.cost), 1200.0),
+               "fixed chunks of 0.6Q must need one route of 200 per customer");
+
+        GeneticConfig dynamicConfig = smallConfig();
+        dynamicConfig.checkInvariants = true;
+        const auto dynamic = router::hgs::runGenetic(data, seed, dynamicConfig, Deadline{});
+        expect(dynamic.best.cost.routes == 4 && dynamic.splits.splitCustomers > 0 &&
+                   router::hgs::objectiveCost(data, dynamic.best.cost) < 820.0,
+               "dynamic mode must split deliveries to serve 3.6Q of demand in four routes");
+        expect(validFor({inst, router::splitCustomers(inst), {}}, data, dynamic.best),
+               "the dynamic split solution must pass the quantity-based validator");
+
+        GeneticConfig invalid = smallConfig();
+        invalid.splitMode = router::hgs::SplitMode::Fixed;
+        invalid.moves = {"relocate", "transfer"};
+        hgs_test::expectInvalidArgument([&]() { router::hgs::runGenetic(data, seed, invalid, Deadline{}); },
+                                        "fixed split mode must reject quantity moves");
+        expect(router::hgs::parseSplitMode("fixed") == router::hgs::SplitMode::Fixed &&
+                   router::hgs::parseSplitMode("dynamic") == router::hgs::SplitMode::Dynamic,
+               "split modes must parse from their names");
+        hgs_test::expectInvalidArgument([]() { router::hgs::parseSplitMode("chunked"); }, "unknown split modes must be rejected");
+    }
+
     void testValidation()
     {
         const Scenario scenario = makeScenario(840, 10);
@@ -215,6 +251,7 @@ int main()
     testStopReasons();
     testFillTimeCapWithFakeClock();
     testZonesAndTrace();
+    testSplitModes();
     testValidation();
     return hgs_test::finish("hgs genetic");
 }

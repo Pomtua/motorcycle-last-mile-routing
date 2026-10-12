@@ -1,6 +1,7 @@
 #include "router/hgs/individual.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 
@@ -28,6 +29,64 @@ namespace router::hgs
             }
         }
         return true;
+    }
+
+    SplitSummary summarizeSplits(const ProblemData &data, const Individual &individual)
+    {
+        SplitSummary summary;
+        summary.deliveries = individual.giantTour.size();
+        summary.canonicalChunks = data.tokenCount();
+        summary.pieceFractionHistogram.assign(std::size(kSplitHistogramEdges), 0);
+
+        std::vector<std::vector<std::int64_t>> pieces(data.customerCount() + 1);
+        for (const Delivery &delivery : individual.giantTour)
+        {
+            pieces[static_cast<std::size_t>(delivery.customer)].push_back(delivery.units);
+        }
+        for (int customer = 1; customer <= static_cast<int>(data.customerCount()); ++customer)
+        {
+            auto &served = pieces[static_cast<std::size_t>(customer)];
+            if (served.empty())
+            {
+                continue;
+            }
+            ++summary.customers;
+            summary.maxDeliveriesPerCustomer = std::max(summary.maxDeliveriesPerCustomer, served.size());
+
+            std::vector<std::int64_t> canonical;
+            for (int token : data.tokensOf(customer))
+            {
+                canonical.push_back(data.token(token).units);
+            }
+            for (std::int64_t units : served)
+            {
+                const auto match = std::find(canonical.begin(), canonical.end(), units);
+                if (match != canonical.end())
+                {
+                    ++summary.deliveriesMatchingCanonical;
+                    canonical.erase(match);
+                }
+            }
+
+            if (served.size() < 2)
+            {
+                continue;
+            }
+            ++summary.splitCustomers;
+            const double demand = static_cast<double>(data.customer(customer).demandUnits);
+            for (std::int64_t units : served)
+            {
+                const double fraction = static_cast<double>(units) / demand;
+                summary.smallestPieceFraction = std::min(summary.smallestPieceFraction, fraction);
+                std::size_t bucket = 0;
+                while (bucket + 1 < std::size(kSplitHistogramEdges) && fraction >= kSplitHistogramEdges[bucket])
+                {
+                    ++bucket;
+                }
+                ++summary.pieceFractionHistogram[bucket];
+            }
+        }
+        return summary;
     }
 
     Individual makeIndividual(const ProblemData &data, std::vector<std::vector<Delivery>> routes)

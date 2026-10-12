@@ -218,4 +218,35 @@ namespace hgs_test
     {
         return router::hgs::makeIndividual(data, toDeliveries(data, tokenRoutes));
     }
+
+    inline router::Instance makeClusterFarFromDepot(int customers, int fleet)
+    {
+        router::Instance inst;
+        inst.n = customers;
+        inst.horizon = 10000.0;
+        inst.fleet = {fleet, 10.0, 1.0};
+        inst.nodes.resize(static_cast<std::size_t>(customers) + 1);
+        for (auto &node : inst.nodes)
+        {
+            node.twEnd = 10000;
+        }
+        for (int customer = 1; customer <= customers; ++customer)
+        {
+            inst.nodes[static_cast<std::size_t>(customer)].demandWeight = 6.0;
+            inst.nodes[static_cast<std::size_t>(customer)].demandVolume = 0.06;
+        }
+        const std::size_t count = inst.nodes.size();
+        inst.distanceMatrix.assign(count, std::vector<double>(count, 1.0));
+        for (std::size_t node = 0; node < count; ++node)
+        {
+            inst.distanceMatrix[node][node] = 0.0;
+            if (node > 0)
+            {
+                inst.distanceMatrix[0][node] = 100.0;
+                inst.distanceMatrix[node][0] = 100.0;
+            }
+        }
+        inst.durationMatrix = inst.distanceMatrix;
+        return inst;
+    }
 }

@@ -1,5 +1,6 @@
 #include "router/validate.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 #include <string>
@@ -11,7 +12,8 @@ namespace router
     {
         constexpr double kWeightTolerance = 1e-6;
         constexpr double kVolumeTolerance = 1e-6;
-        constexpr double kChunkVolumeTolerance = 1e-4;
+        constexpr double kWeightResolution = 0.01;
+        constexpr double kVolumeResolution = 1e-4;
 
         void checkDeliveries(const Instance &inst, const Solution &solution, ValidationReport &report)
         {
@@ -47,8 +49,11 @@ namespace router
                     const Node &node = inst.nodes[static_cast<std::size_t>(stop.nodeIndex)];
                     if (node.demandWeight > 0.0)
                     {
-                        const double expectedVolume = stop.weight * node.demandVolume / node.demandWeight;
-                        if (std::abs(stop.volume - expectedVolume) > kChunkVolumeTolerance)
+                        const double volumePerWeight = node.demandVolume / node.demandWeight;
+                        const double expectedVolume = stop.weight * volumePerWeight;
+                        const double chunkRounding = kWeightResolution * volumePerWeight + kVolumeResolution;
+                        const double rounding = chunkRounding * std::max(1, stop.totalChunks - 1) + 1e-9;
+                        if (std::abs(stop.volume - expectedVolume) > rounding)
                         {
                             report.addViolation(
                                 "route " + std::to_string(r) + " delivers volume " + std::to_string(stop.volume) +

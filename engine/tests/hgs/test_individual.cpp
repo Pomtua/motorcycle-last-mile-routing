@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <random>
 #include <string>
 #include <vector>
@@ -198,6 +199,32 @@ namespace
         expect(coverageViolations(doubled) > 0, "visiting a customer twice in one route must be reported");
     }
 
+    void testValidatorAcceptsRoundedChunks()
+    {
+        router::Instance inst;
+        inst.n = 1;
+        inst.horizon = 10000.0;
+        inst.fleet = {2, 50.0, 0.125};
+        inst.nodes.resize(2);
+        inst.nodes[0].twEnd = 10000;
+        inst.nodes[1].twEnd = 10000;
+        inst.nodes[1].demandWeight = 3.07;
+        inst.nodes[1].demandVolume = 0.2;
+        inst.distanceMatrix = {{0.0, 10.0}, {10.0, 0.0}};
+        inst.durationMatrix = inst.distanceMatrix;
+        const auto chunks = router::splitCustomers(inst);
+        router::Solution solution;
+        for (const router::Visit &chunk : chunks)
+        {
+            solution.routes.push_back({{chunk}});
+        }
+        const double deviation = std::abs(chunks.front().volume - chunks.front().weight * 0.2 / 3.07);
+        expect(chunks.size() == 2 && deviation > 1e-4,
+               "a low-density customer must produce chunks whose volume is off proportion by more than one volume unit");
+        expect(router::validate(inst, solution).feasible,
+               "fill-first chunks must pass when volume is off proportion only by weight and volume rounding");
+    }
+
     void testDeliverySetCheck()
     {
         const router::Instance inst = hgs_test::makeRandomInstance(103, {.customers = 4});
@@ -221,6 +248,7 @@ int main()
     testQuantitiesNeedNotMatchCanonicalChunks();
     testRejections();
     testQuantityValidator();
+    testValidatorAcceptsRoundedChunks();
     testDeliverySetCheck();
     return hgs_test::finish("hgs individual");
 }

@@ -104,6 +104,11 @@ namespace router::hgs
         {
             throw std::invalid_argument("zone penalty must be finite and non-negative");
         }
+        if (!std::isfinite(options.minDeliveryFraction) || options.minDeliveryFraction < 0.0 ||
+            options.minDeliveryFraction >= 1.0)
+        {
+            throw std::invalid_argument("minimum delivery fraction must be in [0, 1)");
+        }
         hasZones_ = !options.zoneOf.empty();
         if (hasZones_ && options.zoneOf.size() != inst.nodes.size())
         {
@@ -121,6 +126,7 @@ namespace router::hgs
         volumeCapacity_ = inst.fleet.volumeCapacity;
         horizon_ = inst.horizon;
         zonePenalty_ = options.zonePenalty;
+        minDeliveryFraction_ = options.minDeliveryFraction;
 
         customers_.reserve(inst.nodes.size());
         customers_.push_back({0, 0, 0.0, 0.0, 0.0, 0.0, inst.horizon, 0});
@@ -169,6 +175,14 @@ namespace router::hgs
                 throw std::invalid_argument(
                     "canonical chunks must add up to the demand of customer " + std::to_string(index));
             }
+        }
+
+        minDeliveryUnits_.assign(customers_.size(), 1);
+        for (std::size_t index = 1; index < customers_.size(); ++index)
+        {
+            const auto required = static_cast<std::int64_t>(
+                std::ceil(options.minDeliveryFraction * static_cast<double>(customers_[index].demandUnits) - 1e-9));
+            minDeliveryUnits_[index] = std::max<std::int64_t>(1, required);
         }
 
         buildNeighbours(options.granularity);

@@ -325,8 +325,12 @@ namespace router::hgs
     std::optional<double> PartialRelocate::evaluate(
         const SearchNode &u, const SearchNode &target, std::int64_t moved, const SearchRoutes &routes)
     {
-        if (u.isDepot() || target.next == nullptr || u.route == target.route || moved < 1 || moved >= u.units ||
-            routes.hasCustomerInRoute(u.customer, target.route))
+        if (u.isDepot() || target.next == nullptr || u.route == target.route)
+        {
+            return std::nullopt;
+        }
+        const std::int64_t minimum = routes.data().minDeliveryUnits(u.customer);
+        if (moved < minimum || u.units - moved < minimum || routes.hasCustomerInRoute(u.customer, target.route))
         {
             return std::nullopt;
         }
@@ -347,7 +351,8 @@ namespace router::hgs
 
     bool PartialRelocate::tryApply(SearchNode &u, SearchNode &v, SearchRoutes &routes)
     {
-        if (routes.freeNodeCount() == 0 || u.units < 2)
+        const std::int64_t minimum = routes.data().minDeliveryUnits(u.customer);
+        if (routes.freeNodeCount() == 0 || u.units < 2 * minimum)
         {
             return false;
         }
@@ -362,7 +367,7 @@ namespace router::hgs
                 continue;
             }
             const std::int64_t room = residualUnits(routes.data(), routes.route(target->route).summary(), u.customer);
-            for (std::int64_t moved : candidateAmounts({room, excess}, 1, u.units - 1))
+            for (std::int64_t moved : candidateAmounts({room, excess}, minimum, u.units - minimum))
             {
                 const std::optional<double> delta = evaluate(u, *target, moved, routes);
                 if (!delta)
@@ -392,7 +397,7 @@ namespace router::hgs
         const SearchNode &u, const SearchNode &sibling, std::int64_t moved, const SearchRoutes &routes)
     {
         if (&u == &sibling || u.isDepot() || u.customer != sibling.customer || u.route == sibling.route ||
-            moved < 1 || moved >= u.units)
+            moved < 1 || u.units - moved < routes.data().minDeliveryUnits(u.customer))
         {
             return std::nullopt;
         }
@@ -416,7 +421,8 @@ namespace router::hgs
         const std::int64_t excess = excessUnits(routes.data(), routes.route(u.route).summary(), u.customer);
         std::int64_t bestMoved = 0;
         double bestDelta = -kImprovementEpsilon;
-        for (std::int64_t moved : candidateAmounts({room, excess}, 1, u.units - 1))
+        const std::int64_t keep = routes.data().minDeliveryUnits(u.customer);
+        for (std::int64_t moved : candidateAmounts({room, excess}, 1, u.units - keep))
         {
             const std::optional<double> delta = evaluate(u, sibling, moved, routes);
             if (!delta)
@@ -449,6 +455,7 @@ namespace router::hgs
         const ProblemData &data = routes.data();
         const int customer = u.customer;
         const std::int64_t quantity = u.units;
+        const std::int64_t minimum = data.minDeliveryUnits(customer);
 
         const auto pieceDelta = [&](SearchNode &target, bool merge, std::int64_t units)
         {
@@ -477,6 +484,10 @@ namespace router::hgs
                 return;
             }
             const std::int64_t capacity = std::min(room, quantity);
+            if (!merge && capacity < minimum)
+            {
+                return;
+            }
             const double ratio = pieceDelta(*target, merge, capacity) / static_cast<double>(capacity);
             const auto existing = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate &candidate)
                                                { return candidate.target->route == target->route; });
@@ -530,8 +541,16 @@ namespace router::hgs
                 break;
             }
             const std::int64_t take = std::min(candidate.capacity, remaining);
+            if (!candidate.merge && take < minimum)
+            {
+                continue;
+            }
             result.pieces.push_back({candidate.target, candidate.merge, take, pieceDelta(*candidate.target, candidate.merge, take)});
             remaining -= take;
+        }
+        if (result.pieces.empty())
+        {
+            return std::nullopt;
         }
         if (remaining > 0)
         {

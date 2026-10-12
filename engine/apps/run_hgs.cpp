@@ -103,15 +103,31 @@ namespace
                 {"removed_by_fitness", result.population.removedByFitness}}}};
     }
 
-    nlohmann::json configJson(const router::hgs::GeneticConfig &config)
+    nlohmann::json splitJson(const router::hgs::SplitSummary &splits)
     {
         return {
+            {"customers", splits.customers},
+            {"deliveries", splits.deliveries},
+            {"canonical_chunks", splits.canonicalChunks},
+            {"split_customers", splits.splitCustomers},
+            {"max_deliveries_per_customer", splits.maxDeliveriesPerCustomer},
+            {"deliveries_matching_canonical", splits.deliveriesMatchingCanonical},
+            {"smallest_piece_fraction", splits.splitCustomers > 0 ? nlohmann::json(splits.smallestPieceFraction) : nlohmann::json(nullptr)},
+            {"piece_fraction_edges", std::vector<double>(std::begin(router::hgs::kSplitHistogramEdges), std::end(router::hgs::kSplitHistogramEdges))},
+            {"piece_fraction_histogram", splits.pieceFractionHistogram}};
+    }
+
+    nlohmann::json configJson(const router::hgs::GeneticConfig &config, double minDeliveryFraction)
+    {
+        return {
+            {"split_mode", router::hgs::splitModeName(config.splitMode)},
+            {"min_delivery_fraction", minDeliveryFraction},
             {"mu", config.population.mu},
             {"lambda", config.population.lambda},
             {"n_close", config.population.nClose},
             {"n_elite", config.population.nElite},
             {"granularity", kGranularity},
-            {"moves", config.moves},
+            {"moves", router::hgs::effectiveMoves(config)},
             {"max_iterations", config.maxIterations == kUnlimitedIterations
                                    ? nlohmann::json(nullptr)
                                    : nlohmann::json(config.maxIterations)},
@@ -146,6 +162,8 @@ int main(int argc, char **argv)
         router::hgs::GeneticConfig config;
         bool seedSpecified = false;
         std::optional<std::string> tracePath;
+        std::optional<std::string> splitModeArg;
+        std::optional<double> minDeliveryArg;
         std::vector<std::string> positionalArgs;
         for (int index = 1; index < argc; ++index)
         {
@@ -167,6 +185,28 @@ int main(int argc, char **argv)
                 }
                 tracePath = argv[++index];
             }
+            else if (arg == "--split-mode")
+            {
+                if (splitModeArg || index + 1 >= argc)
+                {
+                    throw std::invalid_argument("--split-mode requires fixed or dynamic and cannot be repeated");
+                }
+                splitModeArg = argv[++index];
+            }
+            else if (arg == "--min-delivery-fraction")
+            {
+                if (minDeliveryArg || index + 1 >= argc)
+                {
+                    throw std::invalid_argument("--min-delivery-fraction requires one value and cannot be repeated");
+                }
+                std::size_t parsedChars = 0;
+                const std::string text = argv[++index];
+                minDeliveryArg = std::stod(text, &parsedChars);
+                if (parsedChars != text.size())
+                {
+                    throw std::invalid_argument("--min-delivery-fraction must be a number");
+                }
+            }
             else if (arg.starts_with("--"))
             {
                 throw std::invalid_argument("unknown option: " + arg);
@@ -180,13 +220,19 @@ int main(int argc, char **argv)
             (positionalArgs.size() != 1 && positionalArgs.size() != 2 && positionalArgs.size() != 4))
         {
             std::cerr << "usage: run_hgs <instance.json> "
-                         "[time_limit_seconds [num_zones|auto zone_penalty]] [--seed N] [--trace file.jsonl]\n";
+                         "[time_limit_seconds [num_zones|auto zone_penalty]] [--seed N] [--trace file.jsonl] "
+                         "[--split-mode fixed|dynamic] [--min-delivery-fraction F]\n";
             return 2;
         }
         const char *checkFlag = std::getenv("HGS_CHECK");
         config.checkInvariants = checkFlag != nullptr && std::string(checkFlag) != "0";
         config.traceInterval = tracePath ? 100 : 0;
         config.maxIterations = kUnlimitedIterations;
+        if (splitModeArg)
+        {
+            config.splitMode = router::hgs::parseSplitMode(*splitModeArg);
+        }
+        const double minDeliveryFraction = minDeliveryArg.value_or(0.0);
 
         double timeLimitSeconds = 1.0;
         if (positionalArgs.size() >= 2)
@@ -298,7 +344,7 @@ int main(int argc, char **argv)
             {"time_budget_ms", timeLimitMs},
             {"search_deadline_reserve_ms", reserveMs},
             {"hgs_seed", config.seed},
-            {"hgs_parameters", configJson(config)},
+            {"hgs_parameters", configJson(config, minDeliveryFraction)},
             {"hgs_preprocessing_ms", nullptr},
             {"construction_ms", nullptr},
             {"seed_validation_ms", nullptr},
@@ -327,6 +373,7 @@ int main(int argc, char **argv)
             {"penalty_updates", nullptr},
             {"diversifications", nullptr},
             {"hgs_stats", nullptr},
+            {"split_summary", nullptr},
             {"stop_reason", nullptr},
             {"status", nullptr},
             {"error", nullptr}};
@@ -343,7 +390,7 @@ int main(int argc, char **argv)
             budgetEnd - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(reserveMs));
 
         const auto visitCatalog = router::splitCustomers(inst);
-        const router::hgs::ProblemData data(inst, visitCatalog, {zoneOf, zonePenalty, kGranularity});
+        const router::hgs::ProblemData data(inst, visitCatalog, {zoneOf, zonePenalty, kGranularity, minDeliveryFraction});
         const auto setupEnd = Clock::now();
         runResult["hgs_preprocessing_ms"] = elapsedMs(solverStart, setupEnd);
 
@@ -452,6 +499,7 @@ int main(int argc, char **argv)
         runResult["penalty_updates"] = hgs.stats.penaltyUpdates;
         runResult["diversifications"] = hgs.stats.diversifications;
         runResult["hgs_stats"] = statsJson(hgs);
+        runResult["split_summary"] = splitJson(hgs.splits);
         runResult["stop_reason"] = router::hgs::stopReasonName(hgs.stopReason);
         runResult["seed_distance_cost"] = seedCost;
         runResult["seed_objective_cost"] = seedCost + seedZoneCost;
@@ -534,6 +582,9 @@ int main(int argc, char **argv)
         std::cout << "fills cut      = " << hgs.stats.fillsCutByTime << "\n";
         std::cout << "repairs        = " << hgs.stats.repairsSucceeded << " / " << hgs.stats.repairsAttempted << "\n";
         std::cout << "penalty updates= " << hgs.stats.penaltyUpdates << "\n";
+        std::cout << "split mode     = " << router::hgs::splitModeName(config.splitMode) << "\n";
+        std::cout << "deliveries     = " << hgs.splits.deliveries << " (canonical chunks " << hgs.splits.canonicalChunks << ")\n";
+        std::cout << "split customers= " << hgs.splits.splitCustomers << " / " << hgs.splits.customers << "\n";
         std::cout << "education      = " << hgs.stats.education.calls << " runs, " << hgs.stats.education.totalMs << " ms\n";
         std::cout << "hgs prep time  = " << runResult["hgs_preprocessing_ms"] << " ms\n";
         std::cout << "construct time = " << runResult["construction_ms"] << " ms\n";

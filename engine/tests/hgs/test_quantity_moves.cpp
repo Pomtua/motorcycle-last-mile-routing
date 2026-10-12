@@ -321,39 +321,9 @@ namespace
         expect(costsDecrease, "every applied quantity move must strictly reduce the penalized cost");
     }
 
-    router::Instance clusterFarFromDepot()
-    {
-        router::Instance inst;
-        inst.n = 3;
-        inst.horizon = 10000.0;
-        inst.fleet = {3, 10.0, 1.0};
-        inst.nodes.resize(4);
-        for (auto &node : inst.nodes)
-        {
-            node.twEnd = 10000;
-        }
-        for (int customer = 1; customer <= 3; ++customer)
-        {
-            inst.nodes[static_cast<std::size_t>(customer)].demandWeight = 6.0;
-            inst.nodes[static_cast<std::size_t>(customer)].demandVolume = 0.06;
-        }
-        inst.distanceMatrix.assign(4, std::vector<double>(4, 1.0));
-        for (std::size_t node = 0; node < 4; ++node)
-        {
-            inst.distanceMatrix[node][node] = 0.0;
-            if (node > 0)
-            {
-                inst.distanceMatrix[0][node] = 100.0;
-                inst.distanceMatrix[node][0] = 100.0;
-            }
-        }
-        inst.durationMatrix = inst.distanceMatrix;
-        return inst;
-    }
-
     void testSplitBeatsFixedChunks()
     {
-        const router::Instance inst = clusterFarFromDepot();
+        const router::Instance inst = hgs_test::makeClusterFarFromDepot(3, 3);
         const ProblemData data(inst, router::splitCustomers(inst));
         const Penalties penalties{1000.0, 1e6, 100.0};
         const router::hgs::Individual start = hgs_test::individualFromTokens(data, {{1}, {2}, {3}});
@@ -379,6 +349,34 @@ namespace
                "exactly one customer must be served in two parts");
         expect(router::validate(inst, router::hgs::toSolution(data, dynamicResult)).feasible,
                "the split solution must pass the quantity-based validator");
+
+        const router::hgs::SplitSummary splits = router::hgs::summarizeSplits(data, dynamicResult);
+        expect(splits.customers == 3 && splits.deliveries == 4 && splits.splitCustomers == 1 &&
+                   splits.maxDeliveriesPerCustomer == 2 && splits.deliveriesMatchingCanonical == 2 &&
+                   hgs_test::near(splits.smallestPieceFraction, 2.0 / 6.0) &&
+                   splits.pieceFractionHistogram == std::vector<std::size_t>({0, 0, 1, 1}),
+               "the split summary must report one customer served 4 + 2 out of 6");
+    }
+
+    void testMinimumDeliveryBlocksSmallSplits()
+    {
+        const router::Instance inst = hgs_test::makeClusterFarFromDepot(3, 3);
+        router::hgs::ProblemOptions options;
+        options.minDeliveryFraction = 0.6;
+        const ProblemData data(inst, router::splitCustomers(inst), options);
+        expect(data.minDeliveryUnits(1) == 360, "a 60% minimum of 6 kg must be 3.6 kg");
+
+        router::hgs::LocalSearch dynamic(data, router::hgs::makeMoves(kDynamicMoves));
+        dynamic.setInvariantChecks(true);
+        router::hgs::Individual result = hgs_test::individualFromTokens(data, {{1}, {2}, {3}});
+        router::hgs::Rng rng(1);
+        router::hgs::Deadline noDeadline;
+        dynamic.run(result, {1000.0, 1e6, 100.0}, rng, noDeadline);
+        expect(result.cost.routes == 3 && result.giantTour.size() == 3,
+               "a minimum of 3.6 kg per delivery must forbid the 4 + 2 split");
+
+        hgs_test::expectInvalidArgument([&]() { router::hgs::ProblemData(inst, router::splitCustomers(inst), {{}, 0.0, 20, 1.0}); },
+                                        "a minimum delivery fraction of one must be rejected");
     }
 }
 
@@ -390,5 +388,6 @@ int main()
     testSplitInsertionPlans();
     testMovesKeepInvariants();
     testSplitBeatsFixedChunks();
+    testMinimumDeliveryBlocksSmallSplits();
     return hgs_test::finish("hgs quantity_moves");
 }
