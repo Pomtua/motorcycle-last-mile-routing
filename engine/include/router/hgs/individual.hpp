@@ -1,26 +1,29 @@
 #pragma once
 
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 #include "router/hgs/cost_model.hpp"
+#include "router/hgs/delivery.hpp"
 #include "router/hgs/problem_data.hpp"
 #include "router/solution.hpp"
 
 namespace router::hgs
 {
+    using Arc = std::pair<int, int>;
+
     struct Individual
     {
-        std::vector<int> giantTour;
-        std::vector<std::vector<int>> routes;
-        std::vector<int> successor;
-        std::vector<int> predecessor;
+        std::vector<Delivery> giantTour;
+        std::vector<std::vector<Delivery>> routes;
+        std::vector<Arc> arcs;
         CostBreakdown cost;
     };
 
-    bool isCompletePermutation(const std::vector<int> &giantTour, std::size_t visitCount);
+    bool isCompleteDeliverySet(const ProblemData &data, const std::vector<Delivery> &deliveries);
 
-    Individual makeIndividual(const ProblemData &data, std::vector<std::vector<int>> routes);
+    Individual makeIndividual(const ProblemData &data, std::vector<std::vector<Delivery>> routes);
     Individual individualFromSolution(const ProblemData &data, const Solution &solution);
     Solution toSolution(const ProblemData &data, const Individual &individual);
 }

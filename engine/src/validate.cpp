@@ -1,57 +1,81 @@
 #include "router/validate.hpp"
 
-#include <map>
+#include <cmath>
 #include <set>
-
-#include "router/split.hpp"
+#include <string>
+#include <vector>
 
 namespace router
 {
     namespace
     {
-        void checkCoverageAndDuplicates(const Instance &inst, const Solution &solution,
-                                        ValidationReport &report)
-        {
-            std::set<std::pair<int, int>> required;
-            for (const Visit &v : splitCustomers(inst))
-            {
-                required.insert({v.nodeIndex, v.chunkIdx});
-            }
+        constexpr double kWeightTolerance = 1e-6;
+        constexpr double kVolumeTolerance = 1e-6;
+        constexpr double kChunkVolumeTolerance = 1e-4;
 
-            std::set<std::pair<int, int>> servedOverall;
+        void checkDeliveries(const Instance &inst, const Solution &solution, ValidationReport &report)
+        {
+            const std::size_t nodeCount = inst.nodes.size();
+            std::vector<double> deliveredWeight(nodeCount, 0.0);
+            std::vector<double> deliveredVolume(nodeCount, 0.0);
 
             for (std::size_t r = 0; r < solution.routes.size(); ++r)
             {
                 std::set<int> customersInThisRoute;
-
                 for (const Visit &stop : solution.routes[r].stops)
                 {
-                    const auto key = std::make_pair(stop.nodeIndex, stop.chunkIdx);
-
-                    if (!servedOverall.insert(key).second)
+                    if (stop.nodeIndex <= 0 || static_cast<std::size_t>(stop.nodeIndex) >= nodeCount)
                     {
                         report.addViolation(
-                            "chunk (nodeIndex=" + std::to_string(stop.nodeIndex) +
-                            ", chunkIdx=" + std::to_string(stop.chunkIdx) +
-                            ") is served more than once across the whole solution");
+                            "route " + std::to_string(r) + " visits nodeIndex=" +
+                            std::to_string(stop.nodeIndex) + ", which is not a customer");
+                        continue;
                     }
-
                     if (!customersInThisRoute.insert(stop.nodeIndex).second)
                     {
                         report.addViolation(
-                            "route " + std::to_string(r) + " serves two chunks of the same customer " +
+                            "route " + std::to_string(r) + " serves the same customer twice " +
                             "(nodeIndex=" + std::to_string(stop.nodeIndex) + ") — not allowed");
                     }
+                    if (!(stop.weight > kWeightTolerance))
+                    {
+                        report.addViolation(
+                            "route " + std::to_string(r) + " delivers a non-positive weight to nodeIndex=" +
+                            std::to_string(stop.nodeIndex));
+                    }
+
+                    const Node &node = inst.nodes[static_cast<std::size_t>(stop.nodeIndex)];
+                    if (node.demandWeight > 0.0)
+                    {
+                        const double expectedVolume = stop.weight * node.demandVolume / node.demandWeight;
+                        if (std::abs(stop.volume - expectedVolume) > kChunkVolumeTolerance)
+                        {
+                            report.addViolation(
+                                "route " + std::to_string(r) + " delivers volume " + std::to_string(stop.volume) +
+                                " to nodeIndex=" + std::to_string(stop.nodeIndex) +
+                                ", not proportional to its weight (expected " + std::to_string(expectedVolume) + ")");
+                        }
+                    }
+                    deliveredWeight[static_cast<std::size_t>(stop.nodeIndex)] += stop.weight;
+                    deliveredVolume[static_cast<std::size_t>(stop.nodeIndex)] += stop.volume;
                 }
             }
 
-            for (const auto &key : required)
+            for (std::size_t node = 1; node < nodeCount; ++node)
             {
-                if (servedOverall.find(key) == servedOverall.end())
+                if (std::abs(deliveredWeight[node] - inst.nodes[node].demandWeight) > kWeightTolerance)
                 {
                     report.addViolation(
-                        "chunk (nodeIndex=" + std::to_string(key.first) +
-                        ", chunkIdx=" + std::to_string(key.second) + ") was never served");
+                        "customer nodeIndex=" + std::to_string(node) + " receives weight " +
+                        std::to_string(deliveredWeight[node]) + " but demands " +
+                        std::to_string(inst.nodes[node].demandWeight));
+                }
+                if (std::abs(deliveredVolume[node] - inst.nodes[node].demandVolume) > kVolumeTolerance)
+                {
+                    report.addViolation(
+                        "customer nodeIndex=" + std::to_string(node) + " receives volume " +
+                        std::to_string(deliveredVolume[node]) + " but demands " +
+                        std::to_string(inst.nodes[node].demandVolume));
                 }
             }
         }
@@ -154,7 +178,7 @@ namespace router
     ValidationReport validate(const Instance &inst, const Solution &solution)
     {
         ValidationReport report;
-        checkCoverageAndDuplicates(inst, solution, report);
+        checkDeliveries(inst, solution, report);
         checkCapacity(inst, solution, report);
         checkTimeWindows(inst, solution, report);
         checkFleetSize(inst, solution, report);

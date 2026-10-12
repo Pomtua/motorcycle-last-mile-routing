@@ -11,6 +11,9 @@
 #include <utility>
 #include <vector>
 
+#include "router/hgs/delivery.hpp"
+#include "router/hgs/individual.hpp"
+#include "router/hgs/problem_data.hpp"
 #include "router/instance.hpp"
 #include "router/split.hpp"
 
@@ -183,5 +186,36 @@ namespace hgs_test
             }
         }
         return routes;
+    }
+
+    inline std::vector<router::hgs::Delivery> toDeliveries(const router::hgs::ProblemData &data, const std::vector<int> &tokens)
+    {
+        std::vector<router::hgs::Delivery> deliveries;
+        deliveries.reserve(tokens.size());
+        for (int token : tokens)
+        {
+            deliveries.push_back(data.token(token));
+        }
+        return deliveries;
+    }
+
+    inline std::vector<std::vector<router::hgs::Delivery>> toDeliveries(
+        const router::hgs::ProblemData &data,
+        const std::vector<std::vector<int>> &tokenRoutes)
+    {
+        std::vector<std::vector<router::hgs::Delivery>> routes;
+        routes.reserve(tokenRoutes.size());
+        for (const auto &route : tokenRoutes)
+        {
+            routes.push_back(toDeliveries(data, route));
+        }
+        return routes;
+    }
+
+    inline router::hgs::Individual individualFromTokens(
+        const router::hgs::ProblemData &data,
+        const std::vector<std::vector<int>> &tokenRoutes)
+    {
+        return router::hgs::makeIndividual(data, toDeliveries(data, tokenRoutes));
     }
 }

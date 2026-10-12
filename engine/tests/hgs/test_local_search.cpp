@@ -30,12 +30,12 @@ namespace
 
     Individual randomIndividual(const ProblemData &data, const hgs_test::Fixture &fixture, std::mt19937 &rng, double newRouteProbability)
     {
-        return router::hgs::makeIndividual(data, hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, newRouteProbability));
+        return hgs_test::individualFromTokens(data, hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, newRouteProbability));
     }
 
-    bool isSibling(const ProblemData &data, int visit, const SearchNode &other)
+    bool isSibling(const SearchNode &u, const SearchNode &other)
     {
-        return !other.isDepot() && data.visit(other.visit).node == data.visit(visit).node;
+        return !other.isDepot() && other.customer == u.customer;
     }
 
     void testLoadAndExport()
@@ -75,13 +75,13 @@ namespace
             const Penalties penalties{10.0 + seed % 5, 2500.0, 0.7};
 
             SearchRoutes routes(data);
-            routes.load(router::hgs::makeIndividual(data, lists), penalties);
+            routes.load(hgs_test::individualFromTokens(data, lists), penalties);
             const auto current = hgs_test::snapshot(routes);
             const double before = hgs_test::totalCost(data, current, penalties);
 
-            for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
+            for (int id : hgs_test::sortedActiveNodes(routes))
             {
-                const SearchNode &u = routes.node(visit);
+                const SearchNode &u = routes.node(id);
                 for (const SearchNode *target : hgs_test::allTargets(routes))
                 {
                     const auto delta = router::hgs::Relocate::evaluate(u, *target, routes);
@@ -90,10 +90,10 @@ namespace
                         noOpsOnlyWhenExpected = noOpsOnlyWhenExpected && (target == &u || target->next == &u);
                         continue;
                     }
-                    const auto after = hgs_test::relocated(current, visit, *target);
+                    const auto after = hgs_test::relocated(current, u, *target);
                     const double expected = hgs_test::totalCost(data, after, penalties) - before;
                     deltasMatch = deltasMatch && std::abs(*delta - expected) <= 1e-9 * std::max(1.0, before);
-                    const bool expectedConflict = hgs_test::hasCustomerConflict(data, after);
+                    const bool expectedConflict = hgs_test::hasCustomerConflict(after);
                     conflictsMatch = conflictsMatch && router::hgs::Relocate::conflicts(u, *target, routes) == expectedConflict;
                     conflicting += expectedConflict;
                     ++checked;
@@ -116,13 +116,14 @@ namespace
         routes.load(randomIndividual(data, fixture, rng, 0.15), penalties);
         router::hgs::Relocate relocate;
 
-        std::uniform_int_distribution<int> pickVisit(1, static_cast<int>(data.visitCount()));
+        const std::vector<int> ids = hgs_test::sortedActiveNodes(routes);
+        std::uniform_int_distribution<std::size_t> pickNode(0, ids.size() - 1);
         bool invariantsHold = true;
         bool costsDecrease = true;
         for (int trial = 0; trial < 3000; ++trial)
         {
-            SearchNode &u = routes.node(pickVisit(rng));
-            SearchNode &v = routes.node(pickVisit(rng));
+            SearchNode &u = routes.node(ids[pickNode(rng)]);
+            SearchNode &v = routes.node(ids[pickNode(rng)]);
             const double before = routes.totalCost();
             if (!relocate.tryApply(u, v, routes))
             {
@@ -139,14 +140,14 @@ namespace
         expect(costsDecrease, "every applied relocate must strictly reduce the penalized cost");
     }
 
-    bool noImprovingMoveLeft(const ProblemData &data, const SearchRoutes &routes)
+    bool noImprovingMoveLeft(const SearchRoutes &routes)
     {
         const auto improving = [](const std::optional<double> &delta)
         { return delta && *delta < -router::hgs::kImprovementEpsilon; };
 
-        for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
+        for (int id : hgs_test::sortedActiveNodes(routes))
         {
-            const SearchNode &u = routes.node(visit);
+            const SearchNode &u = routes.node(id);
             for (const SearchNode *target : hgs_test::allTargets(routes))
             {
                 if (improving(router::hgs::Relocate::evaluate(u, *target, routes)) &&
@@ -155,15 +156,15 @@ namespace
                     return false;
                 }
 
-                const bool cutBeforeSibling = target->next != nullptr && isSibling(data, visit, *target->next) && target->isDepot();
-                if (!isSibling(data, visit, *target) && !cutBeforeSibling &&
+                const bool cutBeforeSibling = target->next != nullptr && isSibling(u, *target->next) && target->isDepot();
+                if (!isSibling(u, *target) && !cutBeforeSibling &&
                     improving(router::hgs::TwoOptStar::evaluate(u, *target, routes)) &&
                     !router::hgs::TwoOptStar::conflicts(u, *target, routes))
                 {
                     return false;
                 }
 
-                if (!target->isDepot() && !isSibling(data, visit, *target) &&
+                if (!target->isDepot() && !isSibling(u, *target) &&
                     improving(router::hgs::Swap::evaluate(u, *target, routes)) &&
                     !router::hgs::Swap::conflicts(u, *target, routes))
                 {
@@ -207,7 +208,7 @@ namespace
 
             SearchRoutes routes(data);
             routes.load(improved, penalties);
-            optimal = optimal && noImprovingMoveLeft(data, routes);
+            optimal = optimal && noImprovingMoveLeft(routes);
         }
         expect(optimal, "local search with full neighbourhoods must stop where no relocate, swap or 2-opt* improves");
         expect(neverWorse, "local search must never return a worse individual");
@@ -243,7 +244,7 @@ namespace
         const ProblemData data(fixture.inst, fixture.catalog);
         const Penalties penalties{10.0, 2000.0, 1.0};
         std::mt19937 rng(360);
-        std::vector<int> tour(data.visitCount());
+        std::vector<int> tour(data.tokenCount());
         for (std::size_t index = 0; index < tour.size(); ++index)
         {
             tour[index] = static_cast<int>(index) + 1;
@@ -255,7 +256,7 @@ namespace
         for (int trial = 0; trial < 10; ++trial)
         {
             std::shuffle(tour.begin(), tour.end(), rng);
-            auto decoded = router::hgs::split(data, tour, penalties);
+            auto decoded = router::hgs::split(data, hgs_test::toDeliveries(data, tour), penalties);
             if (!decoded)
             {
                 continue;

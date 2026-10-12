@@ -11,40 +11,35 @@ namespace router::hgs
 {
     namespace
     {
-        struct Arc
+        struct SplitArc
         {
             std::size_t end = 0;
             double cost = 0.0;
         };
 
-        std::vector<std::vector<Arc>> buildArcs(
+        std::vector<std::vector<SplitArc>> buildArcs(
             const ProblemData &data,
-            const std::vector<int> &giantTour,
+            const std::vector<Delivery> &giantTour,
             const Penalties &penalties)
         {
             const double weightLimit = kSplitLoadLimitFactor * data.weightCapacity() + kWeightTolerance;
             const double volumeLimit = kSplitLoadLimitFactor * data.volumeCapacity() + kVolumeTolerance;
-            std::vector<std::size_t> segmentOfVisit(data.visitCount() + 1, giantTour.size());
-            std::vector<std::vector<Arc>> arcs(giantTour.size());
-            const auto conflictsWithSegment = [&](int visit, std::size_t begin)
-            {
-                const auto &siblings = data.siblings(visit);
-                return std::any_of(siblings.begin(), siblings.end(), [&](int sibling)
-                                   { return segmentOfVisit[static_cast<std::size_t>(sibling)] == begin; });
-            };
+            std::vector<std::size_t> segmentOfCustomer(data.customerCount() + 1, giantTour.size());
+            std::vector<std::vector<SplitArc>> arcs(giantTour.size());
 
             for (std::size_t begin = 0; begin < giantTour.size(); ++begin)
             {
                 RouteSummary open = depotSummary(data);
                 for (std::size_t end = begin; end < giantTour.size(); ++end)
                 {
-                    const int visit = giantTour[end];
-                    if (conflictsWithSegment(visit, begin))
+                    const Delivery &delivery = giantTour[end];
+                    std::size_t &segment = segmentOfCustomer[static_cast<std::size_t>(delivery.customer)];
+                    if (segment == begin)
                     {
                         break;
                     }
-                    segmentOfVisit[static_cast<std::size_t>(visit)] = begin;
-                    open = concat(data, open, visitSummary(data, visit));
+                    segment = begin;
+                    open = concat(data, open, visitSummary(data, delivery));
                     if (open.weight > weightLimit || open.volume > volumeLimit)
                     {
                         break;
@@ -59,13 +54,13 @@ namespace router::hgs
 
     std::optional<Individual> split(
         const ProblemData &data,
-        const std::vector<int> &giantTour,
+        const std::vector<Delivery> &giantTour,
         const Penalties &penalties)
     {
         validatePenalties(penalties);
-        if (!isCompletePermutation(giantTour, data.visitCount()))
+        if (!isCompleteDeliverySet(data, giantTour))
         {
-            throw std::invalid_argument("Split requires a complete giant-tour permutation");
+            throw std::invalid_argument("Split requires a giant tour that delivers every customer's demand");
         }
         if (giantTour.empty())
         {
@@ -98,7 +93,7 @@ namespace router::hgs
                 {
                     continue;
                 }
-                for (const Arc &arc : arcs[begin])
+                for (const SplitArc &arc : arcs[begin])
                 {
                     const double candidate = previous[begin] + arc.cost;
                     if (candidate < current[arc.end])
@@ -121,7 +116,7 @@ namespace router::hgs
             return std::nullopt;
         }
 
-        std::vector<std::vector<int>> routes(bestRouteCount);
+        std::vector<std::vector<Delivery>> routes(bestRouteCount);
         std::size_t end = visitCount;
         for (std::size_t routeCount = bestRouteCount; routeCount > 0; --routeCount)
         {

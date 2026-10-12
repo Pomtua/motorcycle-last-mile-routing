@@ -18,24 +18,32 @@ namespace router::hgs
 
     double brokenPairsDistance(const Individual &first, const Individual &second)
     {
-        if (first.successor.size() != second.successor.size() ||
-            first.predecessor.size() != second.predecessor.size() ||
-            first.successor.size() != first.predecessor.size())
-        {
-            throw std::invalid_argument("broken-pairs distance needs individuals of the same problem");
-        }
-        const std::size_t visits = first.successor.size() > 0 ? first.successor.size() - 1 : 0;
-        if (visits == 0)
+        const std::size_t total = first.arcs.size() + second.arcs.size();
+        if (total == 0)
         {
             return 0.0;
         }
-        std::size_t broken = 0;
-        for (std::size_t visit = 1; visit <= visits; ++visit)
+        std::size_t shared = 0;
+        auto a = first.arcs.begin();
+        auto b = second.arcs.begin();
+        while (a != first.arcs.end() && b != second.arcs.end())
         {
-            broken += first.predecessor[visit] != second.predecessor[visit];
-            broken += first.successor[visit] != second.successor[visit];
+            if (*a < *b)
+            {
+                ++a;
+            }
+            else if (*b < *a)
+            {
+                ++b;
+            }
+            else
+            {
+                ++shared;
+                ++a;
+                ++b;
+            }
         }
-        return static_cast<double>(broken) / (2.0 * static_cast<double>(visits));
+        return static_cast<double>(total - 2 * shared) / static_cast<double>(total);
     }
 
     std::vector<double> averageRanks(const std::vector<double> &values, bool higherIsBetter)

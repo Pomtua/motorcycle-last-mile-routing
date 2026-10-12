@@ -45,7 +45,7 @@ namespace router::hgs
             GeneticResult run(const Individual &seed)
             {
                 population_.add(seed);
-                if (data_.visitCount() == 0)
+                if (data_.tokenCount() == 0)
                 {
                     result_.stopReason = StopReason::EmptyInstance;
                     return finish();
@@ -104,7 +104,7 @@ namespace router::hgs
                         parents = population_.selectParents(rng_);
                     }
                     ScopedTimer timer(result_.stats.crossover);
-                    tour = orderedCrossover(parents.first->giantTour, parents.second->giantTour, rng_);
+                    tour = orderedCrossover(tokenSequence(data_, *parents.first), tokenSequence(data_, *parents.second), rng_);
                 }
                 return educateAndInsert(tour);
             }
@@ -130,7 +130,7 @@ namespace router::hgs
                         ++result_.stats.fillsCutByTime;
                         break;
                     }
-                    const std::vector<int> &incumbent = population_.bestFeasible()->giantTour;
+                    const std::vector<int> incumbent = tokenSequence(data_, *population_.bestFeasible());
                     std::vector<int> tour;
                     if (attempt < perturbedAttempts)
                     {
@@ -152,7 +152,7 @@ namespace router::hgs
                 std::optional<Individual> child;
                 {
                     ScopedTimer timer(result_.stats.split);
-                    child = split(data_, tour, controller_.penalties());
+                    child = split(data_, deliveriesFromTokens(data_, tour), controller_.penalties());
                 }
                 if (!child)
                 {
@@ -290,7 +290,7 @@ namespace router::hgs
         const TraceSink &trace)
     {
         validateGeneticConfig(config);
-        if (!isFeasible(feasibleSeed.cost) || !isCompletePermutation(feasibleSeed.giantTour, data.visitCount()))
+        if (!isFeasible(feasibleSeed.cost) || !isCompleteDeliverySet(data, feasibleSeed.giantTour))
         {
             throw std::invalid_argument("genetic search requires a complete feasible seed");
         }

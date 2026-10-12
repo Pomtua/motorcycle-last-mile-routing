@@ -36,13 +36,15 @@ namespace router::hgs
         double timeScale = 0.0;
         double weightScale = 0.0;
         double volumeScale = 0.0;
-        for (int from = 0; from <= static_cast<int>(data.visitCount()); ++from)
+        for (int token = 1; token <= static_cast<int>(data.tokenCount()); ++token)
         {
-            const VisitData &visit = data.visit(from);
-            weightScale = std::max(weightScale, visit.weight);
-            volumeScale = std::max(volumeScale, visit.volume);
-            timeScale = std::max(timeScale, visit.serviceTime);
-            for (int to = 0; to <= static_cast<int>(data.visitCount()); ++to)
+            weightScale = std::max(weightScale, toWeight(data.token(token).units));
+            volumeScale = std::max(volumeScale, data.volumeOf(data.token(token)));
+        }
+        for (int from = 0; from <= static_cast<int>(data.customerCount()); ++from)
+        {
+            timeScale = std::max(timeScale, data.customer(from).serviceTime);
+            for (int to = 0; to <= static_cast<int>(data.customerCount()); ++to)
             {
                 distanceScale = std::max(distanceScale, data.distance(from, to));
                 timeScale = std::max(timeScale, data.duration(from, to));

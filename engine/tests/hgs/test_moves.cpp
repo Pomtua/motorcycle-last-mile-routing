@@ -17,7 +17,7 @@ using router::hgs::SearchRoutes;
 
 namespace
 {
-    hgs_test::Fixture smallFixture(std::uint32_t seed, std::mt19937 &rng, hgs_test::RouteLists &lists)
+    hgs_test::Fixture smallFixture(std::uint32_t seed, std::mt19937 &rng, std::vector<std::vector<int>> &lists)
     {
         hgs_test::Fixture fixture = hgs_test::makeFixture(seed, 12, seed % 2 == 0 ? 3 : 0);
         lists = hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, 0.3);
@@ -39,18 +39,19 @@ namespace
         for (std::uint32_t seed = 400; seed < 410; ++seed)
         {
             std::mt19937 rng(seed);
-            hgs_test::RouteLists lists;
+            std::vector<std::vector<int>> lists;
             const hgs_test::Fixture fixture = smallFixture(seed, rng, lists);
             const ProblemData data(fixture.inst, fixture.catalog, {fixture.zoneOf, fixture.zoneOf.empty() ? 0.0 : 80.0, 20});
             const Penalties penalties{12.0, 2500.0, 0.8};
             SearchRoutes routes(data);
-            routes.load(router::hgs::makeIndividual(data, lists), penalties);
+            routes.load(hgs_test::individualFromTokens(data, lists), penalties);
             const auto current = hgs_test::snapshot(routes);
             const double before = hgs_test::totalCost(data, current, penalties);
 
-            for (int first = 1; first <= static_cast<int>(data.visitCount()); ++first)
+            const std::vector<int> ids = hgs_test::sortedActiveNodes(routes);
+            for (int first : ids)
             {
-                for (int second = 1; second <= static_cast<int>(data.visitCount()); ++second)
+                for (int second : ids)
                 {
                     const SearchNode &u = routes.node(first);
                     const SearchNode &v = routes.node(second);
@@ -60,10 +61,10 @@ namespace
                         deltasMatch = deltasMatch && !delta;
                         continue;
                     }
-                    const auto after = hgs_test::swapped(current, first, second);
+                    const auto after = hgs_test::swapped(current, u, v);
                     deltasMatch = deltasMatch && delta &&
                                   within(*delta, hgs_test::totalCost(data, after, penalties) - before, before);
-                    const bool expectedConflict = hgs_test::hasCustomerConflict(data, after);
+                    const bool expectedConflict = hgs_test::hasCustomerConflict(after);
                     conflictsMatch = conflictsMatch && router::hgs::Swap::conflicts(u, v, routes) == expectedConflict;
                     conflicting += expectedConflict;
                     ++checked;
@@ -84,18 +85,18 @@ namespace
         for (std::uint32_t seed = 420; seed < 430; ++seed)
         {
             std::mt19937 rng(seed);
-            hgs_test::RouteLists lists;
+            std::vector<std::vector<int>> lists;
             const hgs_test::Fixture fixture = smallFixture(seed, rng, lists);
             const ProblemData data(fixture.inst, fixture.catalog, {fixture.zoneOf, fixture.zoneOf.empty() ? 0.0 : 80.0, 20});
             const Penalties penalties{12.0, 2500.0, 0.8};
             SearchRoutes routes(data);
-            routes.load(router::hgs::makeIndividual(data, lists), penalties);
+            routes.load(hgs_test::individualFromTokens(data, lists), penalties);
             const auto current = hgs_test::snapshot(routes);
             const double before = hgs_test::totalCost(data, current, penalties);
 
-            for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
+            for (int id : hgs_test::sortedActiveNodes(routes))
             {
-                const SearchNode &u = routes.node(visit);
+                const SearchNode &u = routes.node(id);
                 for (const SearchNode *cut : hgs_test::allTargets(routes))
                 {
                     const auto delta = router::hgs::TwoOptStar::evaluate(u, *cut, routes);
@@ -107,7 +108,7 @@ namespace
                     const auto after = hgs_test::tailsExchanged(current, u, *cut);
                     deltasMatch = deltasMatch && delta &&
                                   within(*delta, hgs_test::totalCost(data, after, penalties) - before, before);
-                    const bool expectedConflict = hgs_test::hasCustomerConflict(data, after);
+                    const bool expectedConflict = hgs_test::hasCustomerConflict(after);
                     conflictsMatch = conflictsMatch && router::hgs::TwoOptStar::conflicts(u, *cut, routes) == expectedConflict;
                     conflicting += expectedConflict;
                     ++checked;
@@ -127,18 +128,19 @@ namespace
         const Penalties penalties{20.0, 4000.0, 1.0};
         std::mt19937 rng(seed);
         SearchRoutes routes(data);
-        routes.load(router::hgs::makeIndividual(data, hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, 0.15)), penalties);
+        routes.load(hgs_test::individualFromTokens(data, hgs_test::makeConflictFreeRoutes(rng, fixture.catalog, 0.15)), penalties);
         MoveType move;
 
-        std::uniform_int_distribution<int> pickVisit(1, static_cast<int>(data.visitCount()));
+        const std::vector<int> ids = hgs_test::sortedActiveNodes(routes);
+        std::uniform_int_distribution<std::size_t> pickNode(0, ids.size() - 1);
         bool invariantsHold = true;
         bool costsDecrease = true;
         for (int trial = 0; trial < 3000; ++trial)
         {
-            SearchNode &u = routes.node(pickVisit(rng));
+            SearchNode &u = routes.node(ids[pickNode(rng)]);
             SearchNode &v = trial % 10 == 0 && routes.firstEmptyRoute() != nullptr
                                 ? routes.firstEmptyRoute()->start
-                                : routes.node(pickVisit(rng));
+                                : routes.node(ids[pickNode(rng)]);
             const double before = routes.totalCost();
             if (!move.tryApply(u, v, routes))
             {

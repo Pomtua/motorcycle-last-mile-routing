@@ -15,7 +15,7 @@ namespace router::hgs
 
         const ProblemData &data = routes.data();
         const SearchRoute &from = routes.route(u.route);
-        const RouteSummary moved = visitSummary(data, u.visit);
+        const RouteSummary moved = visitSummary(data, u.delivery());
 
         if (u.route != target.route)
         {
@@ -41,7 +41,7 @@ namespace router::hgs
 
     bool Relocate::conflicts(const SearchNode &u, const SearchNode &target, const SearchRoutes &routes)
     {
-        return u.route != target.route && routes.hasSiblingInRoute(u.visit, target.route);
+        return u.route != target.route && routes.hasCustomerInRoute(u.customer, target.route, u.id);
     }
 
     void Relocate::apply(SearchNode &u, SearchNode &target, SearchRoutes &routes)
@@ -101,8 +101,8 @@ namespace router::hgs
         }
 
         const ProblemData &data = routes.data();
-        const RouteSummary uSummary = visitSummary(data, u.visit);
-        const RouteSummary vSummary = visitSummary(data, v.visit);
+        const RouteSummary uSummary = visitSummary(data, u.delivery());
+        const RouteSummary vSummary = visitSummary(data, v.delivery());
         if (u.route != v.route)
         {
             const RouteSummary uRouteAfter = concat(data, concat(data, u.prev->prefix, vSummary), u.next->suffix);
@@ -113,20 +113,20 @@ namespace router::hgs
 
         const SearchNode &first = u.position < v.position ? u : v;
         const SearchNode &second = u.position < v.position ? v : u;
-        RouteSummary after = concat(data, first.prev->prefix, visitSummary(data, second.visit));
+        RouteSummary after = concat(data, first.prev->prefix, visitSummary(data, second.delivery()));
         if (first.next != &second)
         {
             after = concat(data, after, routes.summaryBetween(*first.next, *second.prev));
         }
-        after = concat(data, concat(data, after, visitSummary(data, first.visit)), second.next->suffix);
+        after = concat(data, concat(data, after, visitSummary(data, first.delivery())), second.next->suffix);
         return routes.cost(after) - routes.route(u.route).cost;
     }
 
     bool Swap::conflicts(const SearchNode &u, const SearchNode &v, const SearchRoutes &routes)
     {
         return u.route != v.route &&
-               (routes.hasSiblingInRoute(u.visit, v.route, v.visit) ||
-                routes.hasSiblingInRoute(v.visit, u.route, u.visit));
+               (routes.hasCustomerInRoute(u.customer, v.route, v.id) ||
+                routes.hasCustomerInRoute(v.customer, u.route, u.id));
     }
 
     void Swap::apply(SearchNode &u, SearchNode &v, SearchRoutes &routes)
@@ -183,9 +183,13 @@ namespace router::hgs
         {
             for (const SearchNode *moved = &tailStart; !moved->isDepot(); moved = moved->next)
             {
-                for (int sibling : routes.data().siblings(moved->visit))
+                for (int sibling : routes.nodesOf(moved->customer))
                 {
                     const SearchNode &other = routes.node(sibling);
+                    if (sibling == moved->id)
+                    {
+                        continue;
+                    }
                     if (other.route == headRoute && other.position <= headLastPosition)
                     {
                         return true;

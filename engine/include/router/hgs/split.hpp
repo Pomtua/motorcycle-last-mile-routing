@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "router/hgs/cost_model.hpp"
+#include "router/hgs/delivery.hpp"
 #include "router/hgs/individual.hpp"
 #include "router/hgs/problem_data.hpp"
 
@@ -13,6 +14,6 @@ namespace router::hgs
 
     std::optional<Individual> split(
         const ProblemData &data,
-        const std::vector<int> &giantTour,
+        const std::vector<Delivery> &giantTour,
         const Penalties &penalties);
 }

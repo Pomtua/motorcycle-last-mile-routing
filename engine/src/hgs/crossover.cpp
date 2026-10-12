@@ -4,8 +4,6 @@
 #include <random>
 #include <stdexcept>
 
-#include "router/hgs/individual.hpp"
-
 namespace router::hgs
 {
     namespace
@@ -17,6 +15,113 @@ namespace router::hgs
                 throw std::invalid_argument("crossover parents must be permutations of the same visits");
             }
         }
+    }
+
+    bool isCompletePermutation(const std::vector<int> &tokens, std::size_t tokenCount)
+    {
+        if (tokens.size() != tokenCount)
+        {
+            return false;
+        }
+        std::vector<bool> seen(tokenCount + 1, false);
+        for (int token : tokens)
+        {
+            if (token < 1 || static_cast<std::size_t>(token) > tokenCount || seen[static_cast<std::size_t>(token)])
+            {
+                return false;
+            }
+            seen[static_cast<std::size_t>(token)] = true;
+        }
+        return true;
+    }
+
+    std::vector<int> tokenSequence(const ProblemData &data, const Individual &individual)
+    {
+        std::vector<std::vector<bool>> used(data.customerCount() + 1);
+        for (int customer = 1; customer <= static_cast<int>(data.customerCount()); ++customer)
+        {
+            used[static_cast<std::size_t>(customer)].assign(data.tokensOf(customer).size(), false);
+        }
+        const auto claim = [&](const Delivery &delivery) -> int
+        {
+            const auto &tokens = data.tokensOf(delivery.customer);
+            auto &taken = used[static_cast<std::size_t>(delivery.customer)];
+            std::size_t chosen = tokens.size();
+            for (std::size_t index = 0; index < tokens.size(); ++index)
+            {
+                if (taken[index])
+                {
+                    continue;
+                }
+                if (data.token(tokens[index]).units == delivery.units)
+                {
+                    chosen = index;
+                    break;
+                }
+                chosen = chosen == tokens.size() ? index : chosen;
+            }
+            if (chosen == tokens.size())
+            {
+                return 0;
+            }
+            taken[chosen] = true;
+            return tokens[chosen];
+        };
+
+        std::vector<std::vector<int>> slots;
+        std::vector<std::size_t> lastSlotOf(data.customerCount() + 1, 0);
+        std::vector<bool> seen(data.customerCount() + 1, false);
+        for (const Delivery &delivery : individual.giantTour)
+        {
+            const int token = claim(delivery);
+            if (token == 0)
+            {
+                continue;
+            }
+            slots.push_back({token});
+            lastSlotOf[static_cast<std::size_t>(delivery.customer)] = slots.size() - 1;
+            seen[static_cast<std::size_t>(delivery.customer)] = true;
+        }
+        for (int customer = 1; customer <= static_cast<int>(data.customerCount()); ++customer)
+        {
+            const auto index = static_cast<std::size_t>(customer);
+            const auto &tokens = data.tokensOf(customer);
+            for (std::size_t position = 0; position < tokens.size(); ++position)
+            {
+                if (used[index][position])
+                {
+                    continue;
+                }
+                if (!seen[index])
+                {
+                    throw std::invalid_argument("token sequence needs every customer in the giant tour");
+                }
+                slots[lastSlotOf[index]].push_back(tokens[position]);
+            }
+        }
+
+        std::vector<int> sequence;
+        sequence.reserve(data.tokenCount());
+        for (const auto &slot : slots)
+        {
+            sequence.insert(sequence.end(), slot.begin(), slot.end());
+        }
+        return sequence;
+    }
+
+    std::vector<Delivery> deliveriesFromTokens(const ProblemData &data, const std::vector<int> &tokens)
+    {
+        if (!isCompletePermutation(tokens, data.tokenCount()))
+        {
+            throw std::invalid_argument("deliveries need a complete permutation of canonical tokens");
+        }
+        std::vector<Delivery> deliveries;
+        deliveries.reserve(tokens.size());
+        for (int token : tokens)
+        {
+            deliveries.push_back(data.token(token));
+        }
+        return deliveries;
     }
 
     std::vector<int> orderedCrossover(

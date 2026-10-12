@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "router/hgs/cost_model.hpp"
+#include "router/hgs/crossover.hpp"
 #include "router/hgs/penalty_controller.hpp"
 #include "router/hgs/problem_data.hpp"
 #include "router/hgs/split.hpp"
@@ -48,7 +49,7 @@ int main(int argc, char **argv)
         const router::hgs::Penalties penalties = router::hgs::initialPenalties(data);
 
         std::mt19937 rng(42);
-        std::vector<int> tour(data.visitCount());
+        std::vector<int> tour(data.tokenCount());
         std::iota(tour.begin(), tour.end(), 1);
 
         double splitMs = 0.0;
@@ -58,7 +59,7 @@ int main(int argc, char **argv)
         {
             std::shuffle(tour.begin(), tour.end(), rng);
             const auto start = Clock::now();
-            const auto individual = router::hgs::split(data, tour, penalties);
+            const auto individual = router::hgs::split(data, router::hgs::deliveriesFromTokens(data, tour), penalties);
             splitMs += elapsedMs(start, Clock::now());
             if (individual)
             {
@@ -68,7 +69,7 @@ int main(int argc, char **argv)
         }
 
         std::cout << "instance          = " << argv[1] << "\n";
-        std::cout << "visits            = " << data.visitCount() << "\n";
+        std::cout << "canonical chunks  = " << data.tokenCount() << "\n";
         std::cout << "fleet             = " << data.fleetSize() << "\n";
         std::cout << "tours             = " << tours << "\n";
         std::cout << "setup ms          = " << setupMs << "\n";

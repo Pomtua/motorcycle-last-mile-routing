@@ -15,6 +15,7 @@
 
 using hgs_test::expect;
 using hgs_test::near;
+using router::hgs::Delivery;
 using router::hgs::RouteSummary;
 
 namespace
@@ -28,7 +29,7 @@ namespace
                near(a.volume, b.volume, 1e-9);
     }
 
-    RouteSummary foldVisits(const router::hgs::ProblemData &data, const std::vector<int> &visits)
+    RouteSummary foldVisits(const router::hgs::ProblemData &data, const std::vector<Delivery> &visits)
     {
         RouteSummary summary = router::hgs::visitSummary(data, visits.front());
         for (std::size_t index = 1; index < visits.size(); ++index)
@@ -38,13 +39,13 @@ namespace
         return summary;
     }
 
-    std::vector<int> randomVisits(std::mt19937 &rng, const router::hgs::ProblemData &data, std::size_t count)
+    std::vector<Delivery> randomVisits(std::mt19937 &rng, const router::hgs::ProblemData &data, std::size_t count)
     {
-        std::uniform_int_distribution<int> pick(1, static_cast<int>(data.visitCount()));
-        std::vector<int> visits(count);
-        for (int &visit : visits)
+        std::uniform_int_distribution<int> pick(1, static_cast<int>(data.tokenCount()));
+        std::vector<Delivery> visits(count);
+        for (Delivery &visit : visits)
         {
-            visit = pick(rng);
+            visit = data.token(pick(rng));
         }
         return visits;
     }
@@ -82,7 +83,7 @@ namespace
         bool insertionsMatch = true;
         for (int trial = 0; trial < 500; ++trial)
         {
-            const std::vector<int> route = randomVisits(rng, data, length(rng));
+            const std::vector<Delivery> route = randomVisits(rng, data, length(rng));
             const RouteSummary whole = router::hgs::summarizeRoute(data, route);
             for (std::size_t cut = 0; cut <= route.size(); ++cut)
             {
@@ -98,8 +99,8 @@ namespace
                 }
                 splitsMatch = splitsMatch && sameSummary(router::hgs::concat(data, prefix, suffix), whole);
 
-                const int inserted = randomVisits(rng, data, 1).front();
-                std::vector<int> expanded = route;
+                const Delivery inserted = randomVisits(rng, data, 1).front();
+                std::vector<Delivery> expanded = route;
                 expanded.insert(expanded.begin() + static_cast<std::ptrdiff_t>(cut), inserted);
                 const RouteSummary composed = router::hgs::concat(
                     data, router::hgs::concat(data, prefix, router::hgs::visitSummary(data, inserted)), suffix);
@@ -147,7 +148,7 @@ namespace
             }
             clock = arrival + customer.serviceTime;
             result.weight += chunk.weight;
-            result.volume += chunk.volume;
+            result.volume += chunk.weight * customer.demandVolume / customer.demandWeight;
             zones.insert(zoneOf[next]);
             node = next;
         }
@@ -172,7 +173,7 @@ namespace
             for (const auto &route : hgs_test::makeConflictFreeRoutes(rng, catalog, 0.1))
             {
                 const ForwardRoute expected = simulateForward(inst, catalog, zoneOf, route);
-                const RouteSummary summary = router::hgs::summarizeRoute(data, route);
+                const RouteSummary summary = router::hgs::summarizeRoute(data, hgs_test::toDeliveries(data, route));
                 matches = matches &&
                           near(summary.distance, expected.distance, 1e-9) &&
                           near(summary.timeWarp, expected.timeWarp, 1e-9) &&
@@ -201,17 +202,12 @@ namespace
             for (double newRouteProbability : {0.15, 0.4, 1.0})
             {
                 const auto routes = hgs_test::makeConflictFreeRoutes(rng, catalog, newRouteProbability);
-                router::Solution solution;
+                const router::Solution solution =
+                    router::hgs::toSolution(data, hgs_test::individualFromTokens(data, routes));
                 router::hgs::CostBreakdown total;
                 for (const auto &route : routes)
                 {
-                    router::Route exported;
-                    for (int visit : route)
-                    {
-                        exported.stops.push_back(data.catalogVisit(visit));
-                    }
-                    solution.routes.push_back(exported);
-                    total += router::hgs::routeCost(data, router::hgs::summarizeRoute(data, route));
+                    total += router::hgs::routeCost(data, router::hgs::summarizeRoute(data, hgs_test::toDeliveries(data, route)));
                 }
                 const bool validatorFeasible = router::validate(inst, solution).feasible;
                 agrees = agrees && validatorFeasible == router::hgs::isFeasible(total) &&
@@ -229,7 +225,7 @@ namespace
         const auto catalog = router::splitCustomers(inst);
         const router::hgs::ProblemData data(inst, catalog, {hgs_test::makeRandomZones(80, inst, 3), 25.0, 20});
 
-        expect(router::hgs::routeCost(data, router::hgs::summarizeRoute(data, std::vector<int>{})).routes == 0,
+        expect(router::hgs::routeCost(data, router::hgs::summarizeRoute(data, std::vector<Delivery>{})).routes == 0,
                "an empty route must cost nothing and not count as a route");
 
         router::hgs::CostBreakdown cost;

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "router/hgs/cost_model.hpp"
+#include "router/hgs/crossover.hpp"
 #include "router/hgs/individual.hpp"
 #include "router/hgs/local_search.hpp"
 #include "router/hgs/moves.hpp"
@@ -71,7 +72,7 @@ int main(int argc, char **argv)
         router::hgs::Deadline noDeadline;
 
         std::mt19937 rng(42);
-        std::vector<int> tour(data.visitCount());
+        std::vector<int> tour(data.tokenCount());
         std::iota(tour.begin(), tour.end(), 1);
 
         int decoded = 0;
@@ -82,7 +83,7 @@ int main(int argc, char **argv)
         for (int trial = 0; trial < tours; ++trial)
         {
             std::shuffle(tour.begin(), tour.end(), rng);
-            auto individual = router::hgs::split(data, tour, penalties);
+            auto individual = router::hgs::split(data, router::hgs::deliveriesFromTokens(data, tour), penalties);
             if (!individual)
             {
                 continue;
@@ -103,7 +104,7 @@ int main(int argc, char **argv)
 
         const auto &stats = search.stats();
         std::cout << "instance            = " << argv[1] << "\n";
-        std::cout << "visits              = " << data.visitCount() << "\n";
+        std::cout << "canonical chunks    = " << data.tokenCount() << "\n";
         std::cout << "decoded tours       = " << decoded << " / " << tours << "\n";
         std::cout << "split avg cost      = " << splitCostSum / decoded << "\n";
         std::cout << "search avg ms       = " << searchMs / decoded << "\n";

@@ -48,7 +48,7 @@ namespace
         std::vector<Individual> individuals;
         for (int index = 0; index < count; ++index)
         {
-            individuals.push_back(router::hgs::makeIndividual(
+            individuals.push_back(hgs_test::individualFromTokens(
                 data, hgs_test::makeConflictFreeRoutes(rng, setup.catalog, newRouteProbability)));
         }
         return individuals;
@@ -56,36 +56,38 @@ namespace
 
     std::vector<std::vector<int>> capacityPackedRoutes(const ProblemData &data, std::mt19937 &rng)
     {
-        std::vector<int> order(data.visitCount());
+        std::vector<int> order(data.tokenCount());
         std::iota(order.begin(), order.end(), 1);
         std::shuffle(order.begin(), order.end(), rng);
 
         std::vector<std::vector<int>> routes;
         std::vector<double> weights;
         std::vector<double> volumes;
-        for (int visit : order)
+        for (int token : order)
         {
-            const auto &chunk = data.visit(visit);
+            const auto &chunk = data.token(token);
+            const double weight = router::hgs::toWeight(chunk.units);
+            const double volume = data.volumeOf(chunk);
             bool placed = false;
             for (std::size_t index = 0; index < routes.size() && !placed; ++index)
             {
-                const bool fits = weights[index] + chunk.weight <= data.weightCapacity() &&
-                                  volumes[index] + chunk.volume <= data.volumeCapacity();
+                const bool fits = weights[index] + weight <= data.weightCapacity() &&
+                                  volumes[index] + volume <= data.volumeCapacity();
                 const bool sameCustomer = std::any_of(routes[index].begin(), routes[index].end(), [&](int other)
-                                                      { return data.visit(other).node == chunk.node; });
+                                                      { return data.token(other).customer == chunk.customer; });
                 if (fits && !sameCustomer)
                 {
-                    routes[index].push_back(visit);
-                    weights[index] += chunk.weight;
-                    volumes[index] += chunk.volume;
+                    routes[index].push_back(token);
+                    weights[index] += weight;
+                    volumes[index] += volume;
                     placed = true;
                 }
             }
             if (!placed)
             {
-                routes.push_back({visit});
-                weights.push_back(chunk.weight);
-                volumes.push_back(chunk.volume);
+                routes.push_back({token});
+                weights.push_back(weight);
+                volumes.push_back(volume);
             }
         }
         return routes;
@@ -116,11 +118,11 @@ namespace
 
         const router::Instance small = hgs_test::makeRandomInstance(701, {.customers = 3, .maxDemandRatio = 0.4});
         const ProblemData smallData(small, router::splitCustomers(small));
-        expect(smallData.visitCount() == 3, "the hand-worked example needs three unsplit visits");
-        const Individual forward = router::hgs::makeIndividual(smallData, {{1, 2, 3}});
-        const Individual reordered = router::hgs::makeIndividual(smallData, {{1, 3, 2}});
-        expect(near(router::hgs::brokenPairsDistance(forward, reordered), 5.0 / 6.0),
-               "routes 1-2-3 and 1-3-2 must differ in five of six predecessor and successor links");
+        expect(smallData.tokenCount() == 3, "the hand-worked example needs three unsplit customers");
+        const Individual forward = hgs_test::individualFromTokens(smallData, {{1, 2, 3}});
+        const Individual reordered = hgs_test::individualFromTokens(smallData, {{1, 3, 2}});
+        expect(near(router::hgs::brokenPairsDistance(forward, reordered), 6.0 / 8.0),
+               "routes 0-1-2-3-0 and 0-1-3-2-0 share one of four arcs, so six of eight arcs differ");
     }
 
     void testRanks()
@@ -182,7 +184,7 @@ namespace
         std::set<double> distinctObjectives;
         for (int trial = 0; trial < 40; ++trial)
         {
-            Individual individual = router::hgs::makeIndividual(data, capacityPackedRoutes(data, rng));
+            Individual individual = hgs_test::individualFromTokens(data, capacityPackedRoutes(data, rng));
             if (router::hgs::isFeasible(individual.cost))
             {
                 distinctObjectives.insert(router::hgs::objectiveCost(data, individual.cost));

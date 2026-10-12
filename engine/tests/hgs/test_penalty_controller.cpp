@@ -39,6 +39,10 @@ namespace
         }
         inst.nodes[1].serviceTime = 10;
         inst.nodes[2].serviceTime = 30;
+        inst.nodes[1].demandWeight = 4.0;
+        inst.nodes[1].demandVolume = 0.02;
+        inst.nodes[2].demandWeight = 10.0;
+        inst.nodes[2].demandVolume = 0.05;
         inst.distanceMatrix = {{0.0, 40.0, 100.0}, {60.0, 0.0, 20.0}, {80.0, 30.0, 0.0}};
         inst.durationMatrix = {{0.0, 5.0, 50.0}, {6.0, 0.0, 2.0}, {8.0, 3.0, 0.0}};
         const std::vector<router::Visit> catalog{{1, 0, 1, 4.0, 0.02}, {2, 0, 1, 10.0, 0.05}};

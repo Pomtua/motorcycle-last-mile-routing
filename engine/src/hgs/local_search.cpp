@@ -11,13 +11,12 @@ namespace router::hgs
         : data_(data),
           moves_(std::move(moves)),
           routes_(data),
-          lastTested_(data.visitCount() + 1, 0)
+          lastTested_(routes_.nodeCapacity() + 1, 0)
     {
         if (moves_.empty())
         {
             throw std::invalid_argument("local search needs at least one move");
         }
-        order_.resize(data.visitCount());
     }
 
     bool LocalSearch::tryMoves(SearchNode &u, SearchNode &v)
@@ -45,7 +44,8 @@ namespace router::hgs
         {
             routes_.checkInvariants();
         }
-        std::iota(order_.begin(), order_.end(), 1);
+        order_ = routes_.activeNodes();
+        std::sort(order_.begin(), order_.end());
         std::shuffle(order_.begin(), order_.end(), rng);
 
         bool improved = true;
@@ -54,7 +54,7 @@ namespace router::hgs
         {
             ++stats_.passes;
             improved = false;
-            for (int visit : order_)
+            for (int id : order_)
             {
                 if (deadline.expiredEvery(kLocalSearchDeadlineInterval))
                 {
@@ -62,26 +62,39 @@ namespace router::hgs
                     interrupted = true;
                     break;
                 }
-                const std::uint64_t testedAt = lastTested_[static_cast<std::size_t>(visit)];
-                lastTested_[static_cast<std::size_t>(visit)] = routes_.modificationCount();
-
-                for (int neighbour : data_.neighbours(visit))
+                if (routes_.node(id).isDepot())
                 {
-                    SearchNode &u = routes_.node(visit);
-                    SearchNode &v = routes_.node(neighbour);
-                    if (pass > 0 &&
-                        routes_.route(u.route).lastModified <= testedAt &&
-                        routes_.route(v.route).lastModified <= testedAt)
+                    continue;
+                }
+                const std::uint64_t testedAt = lastTested_[static_cast<std::size_t>(id)];
+                lastTested_[static_cast<std::size_t>(id)] = routes_.modificationCount();
+
+                for (int neighbour : data_.neighbours(routes_.node(id).customer))
+                {
+                    candidates_ = routes_.nodesOf(neighbour);
+                    for (int candidate : candidates_)
                     {
-                        ++stats_.pairsSkipped;
-                        continue;
+                        SearchNode &u = routes_.node(id);
+                        SearchNode &v = routes_.node(candidate);
+                        if (u.isDepot() || v.isDepot())
+                        {
+                            continue;
+                        }
+                        if (pass > 0 &&
+                            routes_.route(u.route).lastModified <= testedAt &&
+                            routes_.route(v.route).lastModified <= testedAt)
+                        {
+                            ++stats_.pairsSkipped;
+                            continue;
+                        }
+                        improved = tryMoves(u, v) || improved;
                     }
-                    improved = tryMoves(u, v) || improved;
                 }
 
-                if (SearchRoute *empty = routes_.firstEmptyRoute())
+                SearchRoute *empty = routes_.firstEmptyRoute();
+                if (empty != nullptr && !routes_.node(id).isDepot())
                 {
-                    improved = tryMoves(routes_.node(visit), empty->start) || improved;
+                    improved = tryMoves(routes_.node(id), empty->start) || improved;
                 }
             }
         }

@@ -32,22 +32,58 @@ namespace router::hgs
 
     SearchRoutes::SearchRoutes(const ProblemData &data)
         : data_(data),
-          nodes_(data.visitCount() + 1),
+          nodes_(data.tokenCount() + 2 * static_cast<std::size_t>(data.fleetSize()) + 1),
+          nodesOfCustomer_(data.customerCount() + 1),
           routes_(static_cast<std::size_t>(data.fleetSize()))
     {
-        for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
+        for (int id = 0; id < static_cast<int>(nodes_.size()); ++id)
         {
-            node(visit).visit = visit;
+            node(id).id = id;
         }
         for (int index = 0; index < routeCount(); ++index)
         {
             SearchRoute &current = route(index);
             current.index = index;
+            current.start.id = -1;
+            current.end.id = -1;
             current.start.route = index;
             current.end.route = index;
             current.start.next = &current.end;
             current.end.prev = &current.start;
         }
+        releaseAll();
+    }
+
+    void SearchRoutes::releaseAll()
+    {
+        freeNodes_.clear();
+        for (int id = static_cast<int>(nodes_.size()) - 1; id >= 1; --id)
+        {
+            node(id).customer = ProblemData::kDepot;
+            node(id).units = 0;
+            freeNodes_.push_back(id);
+        }
+        active_.clear();
+        for (auto &list : nodesOfCustomer_)
+        {
+            list.clear();
+        }
+    }
+
+    int SearchRoutes::allocate(const Delivery &delivery)
+    {
+        if (freeNodes_.empty())
+        {
+            throw std::length_error("search routes node pool is exhausted");
+        }
+        const int id = freeNodes_.back();
+        freeNodes_.pop_back();
+        SearchNode &created = node(id);
+        created.customer = delivery.customer;
+        created.units = delivery.units;
+        active_.push_back(id);
+        nodesOfCustomer_[static_cast<std::size_t>(delivery.customer)].push_back(id);
+        return id;
     }
 
     void SearchRoutes::load(const Individual &individual, const Penalties &penalties)
@@ -57,27 +93,32 @@ namespace router::hgs
         {
             throw std::invalid_argument("individual uses more routes than the fleet");
         }
-        std::vector<bool> seen(nodes_.size(), false);
-        std::size_t served = 0;
-        for (const auto &visits : individual.routes)
+        std::vector<Delivery> all;
+        for (const auto &deliveries : individual.routes)
         {
-            for (int visit : visits)
+            std::vector<int> customers;
+            for (const Delivery &delivery : deliveries)
             {
-                if (visit < 1 || static_cast<std::size_t>(visit) >= nodes_.size() ||
-                    seen[static_cast<std::size_t>(visit)])
-                {
-                    throw std::invalid_argument("individual routes must be a permutation of all visits");
-                }
-                seen[static_cast<std::size_t>(visit)] = true;
-                ++served;
+                customers.push_back(delivery.customer);
             }
+            std::sort(customers.begin(), customers.end());
+            if (std::adjacent_find(customers.begin(), customers.end()) != customers.end())
+            {
+                throw std::invalid_argument("a loaded route cannot visit the same customer twice");
+            }
+            all.insert(all.end(), deliveries.begin(), deliveries.end());
         }
-        if (served != data_.visitCount())
+        if (!isCompleteDeliverySet(data_, all))
         {
-            throw std::invalid_argument("individual routes must serve every visit");
+            throw std::invalid_argument("loaded routes must deliver every customer's demand exactly");
+        }
+        if (all.size() > nodeCapacity())
+        {
+            throw std::invalid_argument("loaded routes need more deliveries than the node pool holds");
         }
 
         penalties_ = penalties;
+        releaseAll();
         for (SearchRoute &current : routes_)
         {
             current.start.next = &current.end;
@@ -87,9 +128,9 @@ namespace router::hgs
         {
             SearchRoute &current = routes_[index];
             SearchNode *previous = &current.start;
-            for (int visit : individual.routes[index])
+            for (const Delivery &delivery : individual.routes[index])
             {
-                SearchNode &linked = node(visit);
+                SearchNode &linked = node(allocate(delivery));
                 linked.prev = previous;
                 previous->next = &linked;
                 previous = &linked;
@@ -103,22 +144,22 @@ namespace router::hgs
         }
     }
 
-    std::vector<std::vector<int>> SearchRoutes::exportRoutes() const
+    std::vector<std::vector<Delivery>> SearchRoutes::exportRoutes() const
     {
-        std::vector<std::vector<int>> exported;
+        std::vector<std::vector<Delivery>> exported;
         for (const SearchRoute &current : routes_)
         {
             if (current.empty())
             {
                 continue;
             }
-            std::vector<int> visits;
-            visits.reserve(static_cast<std::size_t>(current.size));
+            std::vector<Delivery> deliveries;
+            deliveries.reserve(static_cast<std::size_t>(current.size));
             for (const SearchNode *linked = current.start.next; linked != &current.end; linked = linked->next)
             {
-                visits.push_back(linked->visit);
+                deliveries.push_back(linked->delivery());
             }
-            exported.push_back(std::move(visits));
+            exported.push_back(std::move(deliveries));
         }
         return exported;
     }
@@ -147,25 +188,36 @@ namespace router::hgs
 
     RouteSummary SearchRoutes::summaryBetween(const SearchNode &first, const SearchNode &last) const
     {
-        RouteSummary summary = visitSummary(data_, first.visit);
+        RouteSummary summary = visitSummary(data_, first.delivery());
         for (const SearchNode *linked = &first; linked != &last;)
         {
             linked = linked->next;
-            summary = concat(data_, summary, visitSummary(data_, linked->visit));
+            summary = concat(data_, summary, visitSummary(data_, linked->delivery()));
         }
         return summary;
     }
 
-    bool SearchRoutes::hasSiblingInRoute(int visit, int routeIndex, int ignoredVisit) const
+    bool SearchRoutes::hasCustomerInRoute(int customer, int routeIndex, int ignoredNode) const
     {
-        for (int sibling : data_.siblings(visit))
+        for (int id : nodesOf(customer))
         {
-            if (sibling != ignoredVisit && node(sibling).route == routeIndex)
+            if (id != ignoredNode && node(id).route == routeIndex)
             {
                 return true;
             }
         }
         return false;
+    }
+
+    void SearchRoutes::moveAfter(SearchNode &moved, SearchNode &after)
+    {
+        moved.prev->next = moved.next;
+        moved.next->prev = moved.prev;
+        moved.prev = &after;
+        moved.next = after.next;
+        after.next->prev = &moved;
+        after.next = &moved;
+        moved.route = after.route;
     }
 
     void SearchRoutes::swapNodes(SearchNode &first, SearchNode &second)
@@ -218,17 +270,6 @@ namespace router::hgs
         relink(second, firstTail, secondRoute.end);
     }
 
-    void SearchRoutes::moveAfter(SearchNode &moved, SearchNode &after)
-    {
-        moved.prev->next = moved.next;
-        moved.next->prev = moved.prev;
-        moved.prev = &after;
-        moved.next = after.next;
-        after.next->prev = &moved;
-        after.next = &moved;
-        moved.route = after.route;
-    }
-
     void SearchRoutes::update(SearchRoute &current)
     {
         RouteSummary prefix = depotSummary(data_);
@@ -239,7 +280,7 @@ namespace router::hgs
         {
             linked->route = current.index;
             linked->position = ++position;
-            prefix = concat(data_, prefix, visitSummary(data_, linked->visit));
+            prefix = concat(data_, prefix, visitSummary(data_, linked->delivery()));
             linked->prefix = prefix;
         }
         current.end.position = position + 1;
@@ -249,7 +290,7 @@ namespace router::hgs
         current.end.suffix = suffix;
         for (SearchNode *linked = current.end.prev; linked != &current.start; linked = linked->prev)
         {
-            suffix = concat(data_, visitSummary(data_, linked->visit), suffix);
+            suffix = concat(data_, visitSummary(data_, linked->delivery()), suffix);
             linked->suffix = suffix;
         }
         current.start.suffix = concat(data_, depotSummary(data_), suffix);
@@ -261,71 +302,97 @@ namespace router::hgs
 
     void SearchRoutes::checkInvariants() const
     {
-        std::vector<int> routeOfVisit(nodes_.size(), -1);
+        std::vector<int> routeOfNode(nodes_.size(), -1);
+        std::vector<std::int64_t> deliveredUnits(data_.customerCount() + 1, 0);
         for (const SearchRoute &current : routes_)
         {
-            std::vector<int> visits;
+            std::vector<Delivery> deliveries;
+            std::vector<int> customers;
             const SearchNode *previous = &current.start;
             for (const SearchNode *linked = current.start.next; linked != &current.end; linked = linked->next)
             {
                 if (linked == nullptr || linked->prev != previous || linked->route != current.index ||
-                    linked->position != static_cast<int>(visits.size()) + 1)
+                    linked->position != static_cast<int>(deliveries.size()) + 1)
                 {
                     fail("broken links or positions in route " + std::to_string(current.index));
                 }
-                if (routeOfVisit[static_cast<std::size_t>(linked->visit)] != -1)
+                if (linked->id <= 0 || routeOfNode[static_cast<std::size_t>(linked->id)] != -1)
                 {
-                    fail("visit " + std::to_string(linked->visit) + " appears twice");
+                    fail("node " + std::to_string(linked->id) + " is invalid or linked twice");
                 }
-                routeOfVisit[static_cast<std::size_t>(linked->visit)] = current.index;
-                visits.push_back(linked->visit);
+                if (linked->units <= 0)
+                {
+                    fail("node " + std::to_string(linked->id) + " delivers a non-positive quantity");
+                }
+                routeOfNode[static_cast<std::size_t>(linked->id)] = current.index;
+                deliveredUnits[static_cast<std::size_t>(linked->customer)] += linked->units;
+                deliveries.push_back(linked->delivery());
+                customers.push_back(linked->customer);
                 previous = linked;
             }
-            if (current.end.prev != previous || current.size != static_cast<int>(visits.size()))
+            if (current.end.prev != previous || current.size != static_cast<int>(deliveries.size()))
             {
                 fail("route " + std::to_string(current.index) + " size or tail is stale");
             }
+            std::sort(customers.begin(), customers.end());
+            if (std::adjacent_find(customers.begin(), customers.end()) != customers.end())
+            {
+                fail("route " + std::to_string(current.index) + " visits a customer twice");
+            }
 
-            const RouteSummary fresh = summarizeRoute(data_, visits);
+            const RouteSummary fresh = summarizeRoute(data_, deliveries);
             if (!sameSummary(current.end.prefix, fresh) || !sameSummary(current.start.suffix, fresh) ||
                 !sameValue(current.cost, cost(fresh)))
             {
                 fail("route " + std::to_string(current.index) + " summary is stale");
             }
-            for (std::size_t cut = 0; cut < visits.size(); ++cut)
+            RouteSummary expectedPrefix = depotSummary(data_);
+            for (std::size_t cut = 0; cut < deliveries.size(); ++cut)
             {
-                const SearchNode &linked = node(visits[cut]);
-                const std::vector<int> head(visits.begin(), visits.begin() + static_cast<std::ptrdiff_t>(cut) + 1);
-                const std::vector<int> tail(visits.begin() + static_cast<std::ptrdiff_t>(cut), visits.end());
-                RouteSummary expectedPrefix = depotSummary(data_);
-                for (int visit : head)
-                {
-                    expectedPrefix = concat(data_, expectedPrefix, visitSummary(data_, visit));
-                }
+                expectedPrefix = concat(data_, expectedPrefix, visitSummary(data_, deliveries[cut]));
                 RouteSummary expectedSuffix = depotSummary(data_);
-                for (auto visit = tail.rbegin(); visit != tail.rend(); ++visit)
+                for (std::size_t tail = deliveries.size(); tail > cut; --tail)
                 {
-                    expectedSuffix = concat(data_, visitSummary(data_, *visit), expectedSuffix);
+                    expectedSuffix = concat(data_, visitSummary(data_, deliveries[tail - 1]), expectedSuffix);
                 }
-                if (!sameSummary(linked.prefix, expectedPrefix) || !sameSummary(linked.suffix, expectedSuffix))
+                const SearchNode *linked = current.start.next;
+                for (std::size_t step = 0; step < cut; ++step)
                 {
-                    fail("prefix or suffix of visit " + std::to_string(visits[cut]) + " is stale");
+                    linked = linked->next;
+                }
+                if (!sameSummary(linked->prefix, expectedPrefix) || !sameSummary(linked->suffix, expectedSuffix))
+                {
+                    fail("prefix or suffix of node " + std::to_string(linked->id) + " is stale");
                 }
             }
         }
-        for (int visit = 1; visit <= static_cast<int>(data_.visitCount()); ++visit)
+
+        for (int id : active_)
         {
-            if (routeOfVisit[static_cast<std::size_t>(visit)] == -1)
+            if (routeOfNode[static_cast<std::size_t>(id)] == -1)
             {
-                fail("visit " + std::to_string(visit) + " is not routed");
+                fail("active node " + std::to_string(id) + " is not routed");
             }
-            for (int sibling : data_.siblings(visit))
+        }
+        std::size_t indexed = 0;
+        for (int customer = 1; customer <= static_cast<int>(data_.customerCount()); ++customer)
+        {
+            if (deliveredUnits[static_cast<std::size_t>(customer)] != data_.customer(customer).demandUnits)
             {
-                if (routeOfVisit[static_cast<std::size_t>(sibling)] == routeOfVisit[static_cast<std::size_t>(visit)])
+                fail("customer " + std::to_string(customer) + " does not receive its exact demand");
+            }
+            for (int id : nodesOf(customer))
+            {
+                if (node(id).customer != customer || routeOfNode[static_cast<std::size_t>(id)] == -1)
                 {
-                    fail("visit " + std::to_string(visit) + " shares a route with a sibling chunk");
+                    fail("customer index of node " + std::to_string(id) + " is stale");
                 }
+                ++indexed;
             }
+        }
+        if (indexed != active_.size() || active_.size() + freeNodes_.size() != nodeCapacity())
+        {
+            fail("node pool bookkeeping is inconsistent");
         }
     }
 }

@@ -6,6 +6,7 @@
 #include "hgs/test_support.hpp"
 #include "router/hgs/crossover.hpp"
 #include "router/hgs/individual.hpp"
+#include "router/split.hpp"
 
 using hgs_test::expect;
 using hgs_test::expectInvalidArgument;
@@ -78,6 +79,52 @@ namespace
                "random cuts must be reproducible with the same seed");
     }
 
+    void testTokenEncoding()
+    {
+        const router::Instance inst = hgs_test::makeRandomInstance(610, {.customers = 12});
+        const auto catalog = router::splitCustomers(inst);
+        const router::hgs::ProblemData data(inst, catalog);
+        std::mt19937 rng(610);
+
+        const auto tokenRoutes = hgs_test::makeConflictFreeRoutes(rng, catalog, 0.3);
+        const router::hgs::Individual fixed = hgs_test::individualFromTokens(data, tokenRoutes);
+        const std::vector<int> sequence = router::hgs::tokenSequence(data, fixed);
+        expect(router::hgs::isCompletePermutation(sequence, data.tokenCount()),
+               "a fixed-chunk individual must encode to a complete token permutation");
+        expect(router::hgs::deliveriesFromTokens(data, sequence) == fixed.giantTour,
+               "decoding the token sequence of a fixed-chunk individual must reproduce its giant tour");
+
+        int split = 0;
+        int whole = 0;
+        for (int customer = 1; customer <= inst.n; ++customer)
+        {
+            const std::size_t chunks = data.tokensOf(customer).size();
+            split = split == 0 && chunks > 1 ? customer : split;
+            whole = whole == 0 && chunks == 1 && data.customer(customer).demandUnits >= 2 ? customer : whole;
+        }
+        expect(split != 0 && whole != 0, "the encoding check needs a split and an unsplit customer");
+        std::vector<std::vector<router::hgs::Delivery>> routes;
+        const std::int64_t wholeDemand = data.customer(whole).demandUnits;
+        routes.push_back({{whole, wholeDemand / 2}});
+        routes.push_back({{whole, wholeDemand - wholeDemand / 2}, {split, data.customer(split).demandUnits}});
+        for (int customer = 1; customer <= inst.n; ++customer)
+        {
+            if (customer != whole && customer != split)
+            {
+                routes.push_back({{customer, data.customer(customer).demandUnits}});
+            }
+        }
+        const router::hgs::Individual dynamic = router::hgs::makeIndividual(data, routes);
+        const std::vector<int> dynamicSequence = router::hgs::tokenSequence(data, dynamic);
+        expect(router::hgs::isCompletePermutation(dynamicSequence, data.tokenCount()),
+               "individuals with merged or extra deliveries must still encode to a complete token permutation");
+        const auto &splitTokens = data.tokensOf(split);
+        const auto firstSplitToken = std::find(dynamicSequence.begin(), dynamicSequence.end(), splitTokens.front());
+        expect(firstSplitToken != dynamicSequence.end() &&
+                   std::equal(splitTokens.begin(), splitTokens.end(), firstSplitToken),
+               "tokens missing from a merged delivery must follow the customer's last delivery");
+    }
+
     void testValidation()
     {
         const std::vector<int> parent{1, 2, 3, 4};
@@ -95,6 +142,7 @@ namespace
 int main()
 {
     testOrderedCrossoverDefinition();
+    testTokenEncoding();
     testValidation();
     return hgs_test::finish("hgs crossover");
 }

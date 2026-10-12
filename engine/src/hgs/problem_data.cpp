@@ -56,6 +56,10 @@ namespace router::hgs
                 {
                     throw std::invalid_argument("nodes need non-negative service and ordered time windows");
                 }
+                if (!isFiniteNonNegative(node.demandWeight) || !isFiniteNonNegative(node.demandVolume))
+                {
+                    throw std::invalid_argument("node demand must be finite and non-negative");
+                }
             }
         }
 
@@ -69,11 +73,26 @@ namespace router::hgs
             }
             return flat;
         }
+
+        std::uint64_t zoneMaskOf(const ProblemOptions &options, int node)
+        {
+            if (options.zoneOf.empty())
+            {
+                return 0;
+            }
+            const int zone = options.zoneOf[static_cast<std::size_t>(node)];
+            if (zone < 0 || zone >= ProblemData::kMaxZones)
+            {
+                throw std::invalid_argument(
+                    "customer zone must be in [0, " + std::to_string(ProblemData::kMaxZones) + ")");
+            }
+            return std::uint64_t{1} << zone;
+        }
     }
 
     ProblemData::ProblemData(
         const Instance &inst,
-        const std::vector<Visit> &visitCatalog,
+        const std::vector<Visit> &canonicalChunks,
         const ProblemOptions &options)
     {
         validateInstance(inst);
@@ -95,7 +114,6 @@ namespace router::hgs
             throw std::invalid_argument("zone penalty requires a zone assignment");
         }
 
-        nodeCount_ = inst.nodes.size();
         distance_ = flatten(inst.distanceMatrix);
         duration_ = flatten(inst.durationMatrix);
         fleetSize_ = inst.fleet.size;
@@ -103,59 +121,53 @@ namespace router::hgs
         volumeCapacity_ = inst.fleet.volumeCapacity;
         horizon_ = inst.horizon;
         zonePenalty_ = options.zonePenalty;
-        catalog_ = visitCatalog;
 
-        visits_.reserve(visitCatalog.size() + 1);
-        visits_.push_back({0, 0.0, 0.0, 0.0, 0.0, inst.horizon, 0});
-        for (const Visit &visit : visitCatalog)
+        customers_.reserve(inst.nodes.size());
+        customers_.push_back({0, 0, 0.0, 0.0, 0.0, 0.0, inst.horizon, 0});
+        for (int node = 1; node <= inst.n; ++node)
         {
-            if (visit.nodeIndex <= 0 || visit.nodeIndex > inst.n)
+            const Node &source = inst.nodes[static_cast<std::size_t>(node)];
+            const std::int64_t units = toUnits(source.demandWeight);
+            if (units == 0 && source.demandVolume > 0.0)
             {
-                throw std::invalid_argument("visit node index must refer to a customer");
+                throw std::invalid_argument("a customer with volume demand must also have weight demand");
             }
-            if (!isFiniteNonNegative(visit.weight) || !isFiniteNonNegative(visit.volume))
-            {
-                throw std::invalid_argument("visit load must be finite and non-negative");
-            }
-            const Node &node = inst.nodes[static_cast<std::size_t>(visit.nodeIndex)];
-            std::uint64_t zoneMask = 0;
-            if (hasZones_)
-            {
-                const int zone = options.zoneOf[static_cast<std::size_t>(visit.nodeIndex)];
-                if (zone < 0 || zone >= kMaxZones)
-                {
-                    throw std::invalid_argument(
-                        "customer zone must be in [0, " + std::to_string(kMaxZones) + ")");
-                }
-                zoneMask = std::uint64_t{1} << zone;
-            }
-            visits_.push_back({
-                visit.nodeIndex,
-                visit.weight,
-                visit.volume,
-                static_cast<double>(node.serviceTime),
-                static_cast<double>(node.twStart),
-                static_cast<double>(node.twEnd),
-                zoneMask});
+            customers_.push_back({
+                node,
+                units,
+                source.demandVolume,
+                units > 0 ? source.demandVolume / static_cast<double>(units) : 0.0,
+                static_cast<double>(source.serviceTime),
+                static_cast<double>(source.twStart),
+                static_cast<double>(source.twEnd),
+                zoneMaskOf(options, node)});
         }
 
-        siblings_.assign(visits_.size(), {});
-        std::vector<std::vector<int>> visitsByNode(nodeCount_);
-        for (int index = 1; index < static_cast<int>(visits_.size()); ++index)
+        tokens_.reserve(canonicalChunks.size() + 1);
+        tokens_.push_back({});
+        tokensOfCustomer_.assign(customers_.size(), {});
+        std::vector<std::int64_t> coveredUnits(customers_.size(), 0);
+        for (const Visit &chunk : canonicalChunks)
         {
-            visitsByNode[static_cast<std::size_t>(visits_[static_cast<std::size_t>(index)].node)].push_back(index);
-        }
-        for (const auto &group : visitsByNode)
-        {
-            for (int member : group)
+            if (chunk.nodeIndex <= 0 || chunk.nodeIndex > inst.n)
             {
-                for (int other : group)
-                {
-                    if (other != member)
-                    {
-                        siblings_[static_cast<std::size_t>(member)].push_back(other);
-                    }
-                }
+                throw std::invalid_argument("canonical chunk must refer to a customer");
+            }
+            if (!isFiniteNonNegative(chunk.weight) || toUnits(chunk.weight) <= 0)
+            {
+                throw std::invalid_argument("canonical chunk weight must be positive");
+            }
+            const Delivery delivery{chunk.nodeIndex, toUnits(chunk.weight)};
+            tokensOfCustomer_[static_cast<std::size_t>(delivery.customer)].push_back(static_cast<int>(tokens_.size()));
+            tokens_.push_back(delivery);
+            coveredUnits[static_cast<std::size_t>(delivery.customer)] += delivery.units;
+        }
+        for (int index = 1; index < static_cast<int>(customers_.size()); ++index)
+        {
+            if (coveredUnits[static_cast<std::size_t>(index)] != customers_[static_cast<std::size_t>(index)].demandUnits)
+            {
+                throw std::invalid_argument(
+                    "canonical chunks must add up to the demand of customer " + std::to_string(index));
             }
         }
 
@@ -164,15 +176,18 @@ namespace router::hgs
 
     void ProblemData::buildNeighbours(std::size_t granularity)
     {
-        neighbours_.assign(visits_.size(), {});
+        neighbours_.assign(customers_.size(), {});
         std::vector<std::pair<double, int>> candidates;
-        for (int index = 1; index < static_cast<int>(visits_.size()); ++index)
+        for (int index = 1; index < static_cast<int>(customers_.size()); ++index)
         {
-            candidates.clear();
-            const int node = visits_[static_cast<std::size_t>(index)].node;
-            for (int other = 1; other < static_cast<int>(visits_.size()); ++other)
+            if (customer(index).demandUnits == 0)
             {
-                if (visits_[static_cast<std::size_t>(other)].node == node)
+                continue;
+            }
+            candidates.clear();
+            for (int other = 1; other < static_cast<int>(customers_.size()); ++other)
+            {
+                if (other == index || customer(other).demandUnits == 0)
                 {
                     continue;
                 }

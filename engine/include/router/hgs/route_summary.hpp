@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstdint>
 
+#include "router/hgs/delivery.hpp"
 #include "router/hgs/problem_data.hpp"
 
 namespace router::hgs
@@ -30,19 +31,19 @@ namespace router::hgs
         return summary;
     }
 
-    inline RouteSummary visitSummary(const ProblemData &data, int visit)
+    inline RouteSummary visitSummary(const ProblemData &data, const Delivery &delivery)
     {
-        const VisitData &v = data.visit(visit);
+        const CustomerData &customer = data.customer(delivery.customer);
         RouteSummary summary;
-        summary.first = visit;
-        summary.last = visit;
+        summary.first = delivery.customer;
+        summary.last = delivery.customer;
         summary.visits = 1;
-        summary.duration = v.serviceTime;
-        summary.earliest = v.twStart;
-        summary.latest = v.twEnd;
-        summary.weight = v.weight;
-        summary.volume = v.volume;
-        summary.zones = v.zoneMask;
+        summary.duration = customer.serviceTime;
+        summary.earliest = customer.twStart;
+        summary.latest = customer.twEnd;
+        summary.weight = toWeight(delivery.units);
+        summary.volume = data.volumeOf(delivery);
+        summary.zones = customer.zoneMask;
         return summary;
     }
 
@@ -68,13 +69,13 @@ namespace router::hgs
         return summary;
     }
 
-    template <typename VisitRange>
-    RouteSummary summarizeRoute(const ProblemData &data, const VisitRange &visits)
+    template <typename DeliveryRange>
+    RouteSummary summarizeRoute(const ProblemData &data, const DeliveryRange &deliveries)
     {
         RouteSummary summary = depotSummary(data);
-        for (int visit : visits)
+        for (const Delivery &delivery : deliveries)
         {
-            summary = concat(data, summary, visitSummary(data, visit));
+            summary = concat(data, summary, visitSummary(data, delivery));
         }
         return concat(data, summary, depotSummary(data));
     }

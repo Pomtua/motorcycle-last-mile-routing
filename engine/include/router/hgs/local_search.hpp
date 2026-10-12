@@ -45,6 +45,7 @@ namespace router::hgs
         std::vector<std::unique_ptr<Move>> moves_;
         SearchRoutes routes_;
         std::vector<int> order_;
+        std::vector<int> candidates_;
         std::vector<std::uint64_t> lastTested_;
         LocalSearchStats stats_;
         bool checkInvariants_ = false;

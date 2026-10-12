@@ -8,6 +8,7 @@
 
 #include "hgs/test_support.hpp"
 #include "router/hgs/cost_model.hpp"
+#include "router/hgs/delivery.hpp"
 #include "router/hgs/problem_data.hpp"
 #include "router/hgs/route_summary.hpp"
 #include "router/hgs/search_routes.hpp"
@@ -15,7 +16,7 @@
 
 namespace hgs_test
 {
-    using RouteLists = std::vector<std::vector<int>>;
+    using RouteLists = std::vector<std::vector<router::hgs::Delivery>>;
 
     struct Fixture
     {
@@ -44,7 +45,7 @@ namespace hgs_test
             const auto &route = routes.route(index);
             for (const auto *node = route.start.next; node != &route.end; node = node->next)
             {
-                lists[static_cast<std::size_t>(index)].push_back(node->visit);
+                lists[static_cast<std::size_t>(index)].push_back(node->delivery());
             }
         }
         return lists;
@@ -63,14 +64,14 @@ namespace hgs_test
         return total;
     }
 
-    inline bool hasCustomerConflict(const router::hgs::ProblemData &data, const RouteLists &lists)
+    inline bool hasCustomerConflict(const RouteLists &lists)
     {
         for (const auto &list : lists)
         {
-            std::set<int> nodes;
-            for (int visit : list)
+            std::set<int> customers;
+            for (const auto &delivery : list)
             {
-                if (!nodes.insert(data.visit(visit).node).second)
+                if (!customers.insert(delivery.customer).second)
                 {
                     return true;
                 }
@@ -81,16 +82,25 @@ namespace hgs_test
 
     inline std::vector<const router::hgs::SearchNode *> allTargets(const router::hgs::SearchRoutes &routes)
     {
+        std::vector<int> ids = routes.activeNodes();
+        std::sort(ids.begin(), ids.end());
         std::vector<const router::hgs::SearchNode *> targets;
-        for (int visit = 1; visit <= static_cast<int>(routes.data().visitCount()); ++visit)
+        for (int id : ids)
         {
-            targets.push_back(&routes.node(visit));
+            targets.push_back(&routes.node(id));
         }
         for (int index = 0; index < routes.routeCount(); ++index)
         {
             targets.push_back(&routes.route(index).start);
         }
         return targets;
+    }
+
+    inline std::vector<int> sortedActiveNodes(const router::hgs::SearchRoutes &routes)
+    {
+        std::vector<int> ids = routes.activeNodes();
+        std::sort(ids.begin(), ids.end());
+        return ids;
     }
 
     inline bool invariantsHold(const router::hgs::SearchRoutes &routes)
@@ -106,31 +116,29 @@ namespace hgs_test
         }
     }
 
-    inline std::vector<int>::iterator positionAfter(std::vector<int> &list, const router::hgs::SearchNode &target)
+    inline std::size_t indexOf(const router::hgs::SearchNode &node)
     {
-        return target.isDepot() ? list.begin() : std::find(list.begin(), list.end(), target.visit) + 1;
+        return static_cast<std::size_t>(node.position) - 1;
     }
 
-    inline RouteLists relocated(RouteLists lists, int visit, const router::hgs::SearchNode &target)
+    inline RouteLists relocated(RouteLists lists, const router::hgs::SearchNode &u, const router::hgs::SearchNode &target)
     {
-        for (auto &list : lists)
-        {
-            list.erase(std::remove(list.begin(), list.end(), visit), list.end());
-        }
+        auto &source = lists[static_cast<std::size_t>(u.route)];
+        const router::hgs::Delivery moved = source[indexOf(u)];
+        source.erase(source.begin() + static_cast<std::ptrdiff_t>(indexOf(u)));
         auto &destination = lists[static_cast<std::size_t>(target.route)];
-        destination.insert(positionAfter(destination, target), visit);
+        std::size_t at = target.isDepot() ? 0 : static_cast<std::size_t>(target.position);
+        if (target.route == u.route && target.position > u.position)
+        {
+            --at;
+        }
+        destination.insert(destination.begin() + static_cast<std::ptrdiff_t>(at), moved);
         return lists;
     }
 
-    inline RouteLists swapped(RouteLists lists, int first, int second)
+    inline RouteLists swapped(RouteLists lists, const router::hgs::SearchNode &u, const router::hgs::SearchNode &v)
     {
-        for (auto &list : lists)
-        {
-            for (int &visit : list)
-            {
-                visit = visit == first ? second : visit == second ? first : visit;
-            }
-        }
+        std::swap(lists[static_cast<std::size_t>(u.route)][indexOf(u)], lists[static_cast<std::size_t>(v.route)][indexOf(v)]);
         return lists;
     }
 
@@ -138,12 +146,12 @@ namespace hgs_test
     {
         auto &uList = lists[static_cast<std::size_t>(u.route)];
         auto &cutList = lists[static_cast<std::size_t>(cut.route)];
-        const auto uSplit = positionAfter(uList, u);
-        const auto cutSplit = positionAfter(cutList, cut);
-        std::vector<int> uHead(uList.begin(), uSplit);
-        std::vector<int> uTail(uSplit, uList.end());
-        std::vector<int> cutHead(cutList.begin(), cutSplit);
-        std::vector<int> cutTail(cutSplit, cutList.end());
+        const auto uSplit = uList.begin() + u.position;
+        const auto cutSplit = cutList.begin() + cut.position;
+        std::vector<router::hgs::Delivery> uHead(uList.begin(), uSplit);
+        std::vector<router::hgs::Delivery> uTail(uSplit, uList.end());
+        std::vector<router::hgs::Delivery> cutHead(cutList.begin(), cutSplit);
+        std::vector<router::hgs::Delivery> cutTail(cutSplit, cutList.end());
         uHead.insert(uHead.end(), cutTail.begin(), cutTail.end());
         cutHead.insert(cutHead.end(), uTail.begin(), uTail.end());
         uList = uHead;

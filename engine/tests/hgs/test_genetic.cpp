@@ -44,11 +44,11 @@ namespace
     Individual singletonSeed(const ProblemData &data)
     {
         std::vector<std::vector<int>> routes;
-        for (int visit = 1; visit <= static_cast<int>(data.visitCount()); ++visit)
+        for (int token = 1; token <= static_cast<int>(data.tokenCount()); ++token)
         {
-            routes.push_back({visit});
+            routes.push_back({token});
         }
-        return router::hgs::makeIndividual(data, routes);
+        return hgs_test::individualFromTokens(data, routes);
     }
 
     GeneticConfig smallConfig()

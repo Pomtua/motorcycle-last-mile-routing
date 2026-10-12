@@ -14,15 +14,17 @@
 
 using hgs_test::expect;
 using hgs_test::near;
+using router::hgs::Delivery;
+using router::hgs::ProblemData;
 
 namespace
 {
-    std::vector<int> shuffledTour(std::mt19937 &rng, std::size_t visitCount)
+    std::vector<Delivery> shuffledTour(std::mt19937 &rng, const ProblemData &data)
     {
-        std::vector<int> tour(visitCount);
-        for (std::size_t index = 0; index < visitCount; ++index)
+        std::vector<Delivery> tour;
+        for (int token = 1; token <= static_cast<int>(data.tokenCount()); ++token)
         {
-            tour[index] = static_cast<int>(index) + 1;
+            tour.push_back(data.token(token));
         }
         std::shuffle(tour.begin(), tour.end(), rng);
         return tour;
@@ -30,14 +32,14 @@ namespace
 
     std::optional<double> bruteForceSplit(
         const router::hgs::ProblemData &data,
-        const std::vector<int> &tour,
+        const std::vector<Delivery> &tour,
         const router::hgs::Penalties &penalties)
     {
         const std::size_t cuts = tour.size() - 1;
         std::optional<double> best;
         for (std::uint32_t mask = 0; mask < (std::uint32_t{1} << cuts); ++mask)
         {
-            std::vector<std::vector<int>> routes{{tour.front()}};
+            std::vector<std::vector<Delivery>> routes{{tour.front()}};
             for (std::size_t index = 1; index < tour.size(); ++index)
             {
                 if (mask & (std::uint32_t{1} << (index - 1)))
@@ -58,7 +60,7 @@ namespace
                 {
                     for (std::size_t second = first + 1; second < route.size() && allowed; ++second)
                     {
-                        allowed = data.visit(route[first]).node != data.visit(route[second]).node;
+                        allowed = route[first].customer != route[second].customer;
                     }
                 }
                 const auto summary = router::hgs::summarizeRoute(data, route);
@@ -93,7 +95,7 @@ namespace
             std::mt19937 rng(seed);
             for (int trial = 0; trial < 5; ++trial)
             {
-                const auto tour = shuffledTour(rng, data.visitCount());
+                const auto tour = shuffledTour(rng, data);
                 const auto expected = bruteForceSplit(data, tour, penalties);
                 const auto decoded = router::hgs::split(data, tour, penalties);
                 if (!expected || !decoded)
@@ -123,7 +125,7 @@ namespace
         bool neverWorse = true;
         for (int trial = 0; trial < 20; ++trial)
         {
-            const auto source = router::hgs::makeIndividual(data, hgs_test::makeConflictFreeRoutes(rng, catalog, 0.15));
+            const auto source = hgs_test::individualFromTokens(data, hgs_test::makeConflictFreeRoutes(rng, catalog, 0.15));
             const auto decoded = router::hgs::split(data, source.giantTour, penalties);
             neverWorse = neverWorse && decoded &&
                          router::hgs::penalizedCost(data, decoded->cost, penalties) <=
@@ -140,8 +142,8 @@ namespace
         const router::hgs::Penalties penalties{1.0, 1.0, 1.0};
 
         std::mt19937 rng(270);
-        const auto tour = shuffledTour(rng, data.visitCount());
-        hgs_test::expectInvalidArgument([&]() { router::hgs::split(data, {1, 2}, penalties); },
+        const auto tour = shuffledTour(rng, data);
+        hgs_test::expectInvalidArgument([&]() { router::hgs::split(data, std::vector<Delivery>(tour.begin(), tour.begin() + 1), penalties); },
                                         "Split must reject incomplete giant tours");
         hgs_test::expectInvalidArgument([&]() { router::hgs::split(data, tour, {-1.0, 0.0, 0.0}); },
                                         "Split must reject negative penalties");
