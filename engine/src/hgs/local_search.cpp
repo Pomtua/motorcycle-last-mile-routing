@@ -1,7 +1,6 @@
 #include "router/hgs/local_search.hpp"
 
 #include <algorithm>
-#include <numeric>
 #include <stdexcept>
 #include <utility>
 
@@ -19,10 +18,22 @@ namespace router::hgs
         }
     }
 
-    bool LocalSearch::tryMoves(SearchNode &u, SearchNode &v)
+    void LocalSearch::rebuildOrder(Rng &rng)
+    {
+        order_ = routes_.activeNodes();
+        std::sort(order_.begin(), order_.end());
+        std::shuffle(order_.begin(), order_.end(), rng);
+        orderVersion_ = routes_.structureVersion();
+    }
+
+    bool LocalSearch::tryMoves(SearchNode &u, SearchNode &v, MoveScope scope)
     {
         for (const auto &move : moves_)
         {
+            if (move->scope() != scope || u.isDepot())
+            {
+                continue;
+            }
             if (move->tryApply(u, v, routes_))
             {
                 if (checkInvariants_)
@@ -44,9 +55,7 @@ namespace router::hgs
         {
             routes_.checkInvariants();
         }
-        order_ = routes_.activeNodes();
-        std::sort(order_.begin(), order_.end());
-        std::shuffle(order_.begin(), order_.end(), rng);
+        rebuildOrder(rng);
 
         bool improved = true;
         bool interrupted = false;
@@ -54,6 +63,10 @@ namespace router::hgs
         {
             ++stats_.passes;
             improved = false;
+            if (routes_.structureVersion() != orderVersion_)
+            {
+                rebuildOrder(rng);
+            }
             for (int id : order_)
             {
                 if (deadline.expiredEvery(kLocalSearchDeadlineInterval))
@@ -87,14 +100,33 @@ namespace router::hgs
                             ++stats_.pairsSkipped;
                             continue;
                         }
-                        improved = tryMoves(u, v) || improved;
+                        improved = tryMoves(u, v, MoveScope::Pair) || improved;
+                    }
+                }
+
+                if (!routes_.node(id).isDepot())
+                {
+                    candidates_ = routes_.nodesOf(routes_.node(id).customer);
+                    for (int sibling : candidates_)
+                    {
+                        SearchNode &u = routes_.node(id);
+                        SearchNode &s = routes_.node(sibling);
+                        if (sibling != id && !u.isDepot() && !s.isDepot() && s.customer == u.customer)
+                        {
+                            improved = tryMoves(u, s, MoveScope::Sibling) || improved;
+                        }
                     }
                 }
 
                 SearchRoute *empty = routes_.firstEmptyRoute();
                 if (empty != nullptr && !routes_.node(id).isDepot())
                 {
-                    improved = tryMoves(routes_.node(id), empty->start) || improved;
+                    improved = tryMoves(routes_.node(id), empty->start, MoveScope::Pair) || improved;
+                }
+
+                if (!routes_.node(id).isDepot())
+                {
+                    improved = tryMoves(routes_.node(id), routes_.node(id), MoveScope::Single) || improved;
                 }
             }
         }

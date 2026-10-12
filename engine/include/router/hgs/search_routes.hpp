@@ -57,6 +57,8 @@ namespace router::hgs
         const std::vector<int> &activeNodes() const { return active_; }
         const std::vector<int> &nodesOf(int customer) const { return nodesOfCustomer_[static_cast<std::size_t>(customer)]; }
         std::size_t nodeCapacity() const { return nodes_.size() - 1; }
+        std::size_t freeNodeCount() const { return freeNodes_.size(); }
+        std::uint64_t structureVersion() const { return structureVersion_; }
         SearchRoute &route(int index) { return routes_[static_cast<std::size_t>(index)]; }
         const SearchRoute &route(int index) const { return routes_[static_cast<std::size_t>(index)]; }
         int routeCount() const { return static_cast<int>(routes_.size()); }
@@ -71,6 +73,9 @@ namespace router::hgs
         void moveAfter(SearchNode &node, SearchNode &after);
         void swapNodes(SearchNode &first, SearchNode &second);
         void exchangeTails(SearchNode &first, SearchNode &second);
+        SearchNode &insertAfter(const Delivery &delivery, SearchNode &after);
+        void remove(SearchNode &removed);
+        void setUnits(SearchNode &changed, std::int64_t units);
         void update(SearchRoute &route);
         void checkInvariants() const;
 
@@ -83,8 +88,10 @@ namespace router::hgs
         std::vector<SearchNode> nodes_;
         std::vector<int> freeNodes_;
         std::vector<int> active_;
+        std::vector<std::size_t> activeIndex_;
         std::vector<std::vector<int>> nodesOfCustomer_;
         std::vector<SearchRoute> routes_;
         std::uint64_t modifications_ = 0;
+        std::uint64_t structureVersion_ = 0;
     };
 }

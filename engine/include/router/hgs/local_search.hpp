@@ -39,13 +39,15 @@ namespace router::hgs
         const std::vector<std::unique_ptr<Move>> &moves() const { return moves_; }
 
     private:
-        bool tryMoves(SearchNode &u, SearchNode &v);
+        bool tryMoves(SearchNode &u, SearchNode &v, MoveScope scope);
+        void rebuildOrder(Rng &rng);
 
         const ProblemData &data_;
         std::vector<std::unique_ptr<Move>> moves_;
         SearchRoutes routes_;
         std::vector<int> order_;
         std::vector<int> candidates_;
+        std::uint64_t orderVersion_ = 0;
         std::vector<std::uint64_t> lastTested_;
         LocalSearchStats stats_;
         bool checkInvariants_ = false;

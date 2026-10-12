@@ -33,6 +33,7 @@ namespace router::hgs
     SearchRoutes::SearchRoutes(const ProblemData &data)
         : data_(data),
           nodes_(data.tokenCount() + 2 * static_cast<std::size_t>(data.fleetSize()) + 1),
+          activeIndex_(nodes_.size(), 0),
           nodesOfCustomer_(data.customerCount() + 1),
           routes_(static_cast<std::size_t>(data.fleetSize()))
     {
@@ -68,6 +69,7 @@ namespace router::hgs
         {
             list.clear();
         }
+        ++structureVersion_;
     }
 
     int SearchRoutes::allocate(const Delivery &delivery)
@@ -81,6 +83,7 @@ namespace router::hgs
         SearchNode &created = node(id);
         created.customer = delivery.customer;
         created.units = delivery.units;
+        activeIndex_[static_cast<std::size_t>(id)] = active_.size();
         active_.push_back(id);
         nodesOfCustomer_[static_cast<std::size_t>(delivery.customer)].push_back(id);
         return id;
@@ -270,6 +273,54 @@ namespace router::hgs
         relink(second, firstTail, secondRoute.end);
     }
 
+    SearchNode &SearchRoutes::insertAfter(const Delivery &delivery, SearchNode &after)
+    {
+        if (delivery.units <= 0 || delivery.customer < 1 ||
+            static_cast<std::size_t>(delivery.customer) > data_.customerCount())
+        {
+            throw std::invalid_argument("inserted deliveries need a customer and a positive quantity");
+        }
+        SearchNode &created = node(allocate(delivery));
+        created.prev = &after;
+        created.next = after.next;
+        after.next->prev = &created;
+        after.next = &created;
+        created.route = after.route;
+        ++structureVersion_;
+        return created;
+    }
+
+    void SearchRoutes::remove(SearchNode &removed)
+    {
+        removed.prev->next = removed.next;
+        removed.next->prev = removed.prev;
+        removed.prev = nullptr;
+        removed.next = nullptr;
+
+        auto &siblings = nodesOfCustomer_[static_cast<std::size_t>(removed.customer)];
+        siblings.erase(std::find(siblings.begin(), siblings.end(), removed.id));
+
+        const std::size_t slot = activeIndex_[static_cast<std::size_t>(removed.id)];
+        const int last = active_.back();
+        active_[slot] = last;
+        activeIndex_[static_cast<std::size_t>(last)] = slot;
+        active_.pop_back();
+
+        removed.customer = ProblemData::kDepot;
+        removed.units = 0;
+        freeNodes_.push_back(removed.id);
+        ++structureVersion_;
+    }
+
+    void SearchRoutes::setUnits(SearchNode &changed, std::int64_t units)
+    {
+        if (units <= 0)
+        {
+            throw std::invalid_argument("a delivery quantity must stay positive");
+        }
+        changed.units = units;
+    }
+
     void SearchRoutes::update(SearchRoute &current)
     {
         RouteSummary prefix = depotSummary(data_);
@@ -393,6 +444,20 @@ namespace router::hgs
         if (indexed != active_.size() || active_.size() + freeNodes_.size() != nodeCapacity())
         {
             fail("node pool bookkeeping is inconsistent");
+        }
+        for (std::size_t slot = 0; slot < active_.size(); ++slot)
+        {
+            if (activeIndex_[static_cast<std::size_t>(active_[slot])] != slot)
+            {
+                fail("active node index is stale");
+            }
+        }
+        for (int id : freeNodes_)
+        {
+            if (!node(id).isDepot())
+            {
+                fail("free node " + std::to_string(id) + " still carries a delivery");
+            }
         }
     }
 }

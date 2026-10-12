@@ -124,6 +124,7 @@ if(BUILD_TESTING)
         crossover
         population
         genetic
+        quantity_moves
     )
 
     foreach(hgs_test_name IN LISTS HGS_TEST_MODULES)
