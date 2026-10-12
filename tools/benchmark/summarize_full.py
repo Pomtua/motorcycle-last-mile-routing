@@ -81,11 +81,15 @@ def load_sweep(output_dir: Path) -> list[dict]:
             reference = profile["reference_cost"]
             ls_distance = ls_result.get("distance_cost")
             valid = result.get("valid") is True
+            splits = result.get("split_summary") or {}
+            deliveries = splits.get("deliveries", chunk_count)
             row = {
                 "instance": instance.stem.removesuffix("_instance"),
                 "case": case,
                 **profile,
                 "chunk_count": chunk_count,
+                "deliveries": deliveries if valid else None,
+                "split_customers": splits.get("split_customers") if valid else None,
                 "skipped": bool((record or {}).get("skipped")),
                 "solved": result.get("solved") is True,
                 "valid": valid,
@@ -104,9 +108,9 @@ def load_sweep(output_dir: Path) -> list[dict]:
                     (distance - ls_distance) / ls_distance * 100.0
                     if valid and is_number(distance) and is_number(ls_distance) and ls_distance > 0 else None
                 ),
-                "chunks_per_route": (
-                    chunk_count / route_count
-                    if valid and is_number(chunk_count) and is_number(route_count) and route_count > 0 else None
+                "deliveries_per_route": (
+                    deliveries / route_count
+                    if valid and is_number(deliveries) and is_number(route_count) and route_count > 0 else None
                 ),
                 "weight_fill": (
                     profile["total_weight"] / (route_count * profile["weight_capacity"])
@@ -152,26 +156,78 @@ def summarize_solvers(rows: list[dict]) -> list[dict]:
     return summary
 
 
+DEGENERACY_CASES = ("hgs_fixed", "hgs")
+
+PAIRS = (
+    ("hgs", "hgs_fixed"),
+    ("hgs", "ortools_split_hgs_time"),
+    ("hgs_fixed", "ortools_split_hgs_time"),
+    ("hgs_zoned", "ortools_split_zoned_hgs_time"),
+)
+
+
 def summarize_degeneracy(rows: list[dict]) -> list[dict]:
     groups = defaultdict(list)
     for row in rows:
-        if row["case"] == "hgs":
-            groups[row["demand_class"]].append(row)
+        if row["case"] in DEGENERACY_CASES:
+            groups[(row["demand_class"], row["case"])].append(row)
 
     summary = []
-    for demand, members in sorted(groups.items()):
+    for (demand, case), members in sorted(groups.items(), key=lambda item: (item[0][0], DEGENERACY_CASES.index(item[0][1]))):
         valid = [row for row in members if row["valid"]]
+        if not valid:
+            continue
         summary.append({
             "demand_class": demand,
+            "case": case,
             "instances": len(members),
+            "valid": len(valid),
             "mean_chunks_per_customer": mean([row["chunk_count"] / row["size"] for row in members if is_number(row["chunk_count"])]),
             "mean_route_lower_bound_ratio": mean([row["route_lower_bound"] / row["size"] for row in members]),
             "mean_max_chunks_per_route": mean([row["chunk_count"] / row["route_lower_bound"] for row in members if is_number(row["chunk_count"])]),
-            "mean_hgs_chunks_per_route": mean([row["chunks_per_route"] for row in valid if row["chunks_per_route"] is not None]),
-            "mean_hgs_weight_fill": mean([row["weight_fill"] for row in valid if row["weight_fill"] is not None]),
-            "mean_hgs_volume_fill": mean([row["volume_fill"] for row in valid if row["volume_fill"] is not None]),
-            "mean_hgs_gain_vs_i1_ls_pct": mean([-row["gap_vs_i1_ls_pct"] for row in valid if row["gap_vs_i1_ls_pct"] is not None]),
+            "mean_deliveries_per_route": mean([row["deliveries_per_route"] for row in valid if row["deliveries_per_route"] is not None]),
+            "mean_split_customer_ratio": mean([row["split_customers"] / row["size"] for row in valid if is_number(row["split_customers"])]),
+            "mean_routes_over_lower_bound": mean([row["route_count"] / row["route_lower_bound"] for row in valid]),
+            "mean_weight_fill": mean([row["weight_fill"] for row in valid if row["weight_fill"] is not None]),
+            "mean_volume_fill": mean([row["volume_fill"] for row in valid if row["volume_fill"] is not None]),
+            "mean_gain_vs_i1_ls_pct": mean([-row["gap_vs_i1_ls_pct"] for row in valid if row["gap_vs_i1_ls_pct"] is not None]),
         })
+    return summary
+
+
+def summarize_pairs(rows: list[dict]) -> list[dict]:
+    by_instance = defaultdict(dict)
+    for row in rows:
+        by_instance[row["instance"]][row["case"]] = row
+
+    summary = []
+    for candidate, baseline in PAIRS:
+        groups = defaultdict(list)
+        for cases in by_instance.values():
+            first, second = cases.get(candidate), cases.get(baseline)
+            if first is None or second is None or not first["valid"] or not second["valid"]:
+                continue
+            for grouping in ("overall", "demand_class"):
+                groups[(grouping, group_value(first, grouping))].append((first, second))
+
+        for (grouping, value), matched in sorted(groups.items(), key=lambda item: (item[0][0] != "overall", str(item[0][1]))):
+            gaps = [
+                (first["distance_cost"] - second["distance_cost"]) / second["distance_cost"] * 100.0
+                for first, second in matched
+            ]
+            summary.append({
+                "candidate": candidate,
+                "baseline": baseline,
+                "group_by": grouping,
+                "group_value": value,
+                "matched": len(matched),
+                "wins": sum(gap < -1e-9 for gap in gaps),
+                "ties": sum(abs(gap) <= 1e-9 for gap in gaps),
+                "losses": sum(gap > 1e-9 for gap in gaps),
+                "mean_gap_pct": mean(gaps),
+                "median_gap_pct": median(gaps),
+                "mean_route_difference": mean([first["route_count"] - second["route_count"] for first, second in matched]),
+            })
     return summary
 
 
@@ -209,11 +265,13 @@ def main() -> int:
 
     solvers = summarize_solvers(rows)
     degeneracy = summarize_degeneracy(rows)
+    pairs = summarize_pairs(rows)
     write_csv(output_dir / "instances.csv", rows)
     write_csv(output_dir / "summary.csv", solvers)
     write_csv(output_dir / "degeneracy.csv", degeneracy)
+    write_csv(output_dir / "pairs.csv", pairs)
     (output_dir / "summary.json").write_text(
-        json.dumps({"solvers": solvers, "degeneracy": degeneracy}, indent=2) + "\n", encoding="utf-8"
+        json.dumps({"solvers": solvers, "degeneracy": degeneracy, "pairs": pairs}, indent=2) + "\n", encoding="utf-8"
     )
 
     columns = [
@@ -225,13 +283,19 @@ def main() -> int:
     for demand in sorted({row["demand_class"] for row in rows}):
         print_table(f"Demand class {demand}",
                     [row for row in solvers if row["group_by"] == "demand_class" and row["group_value"] == demand], columns)
-    print_table("Degeneracy (HGS solutions)", degeneracy, [
-        ("demand", "demand_class"), ("instances", "instances"), ("chunks/customer", "mean_chunks_per_customer"),
-        ("max chunks/route", "mean_max_chunks_per_route"), ("HGS chunks/route", "mean_hgs_chunks_per_route"),
-        ("weight fill", "mean_hgs_weight_fill"), ("volume fill", "mean_hgs_volume_fill"),
-        ("HGS gain vs I1+LS %", "mean_hgs_gain_vs_i1_ls_pct"),
+    print_table("Pairwise at equal time (gap = candidate vs baseline, negative is better)", pairs, [
+        ("candidate", "candidate"), ("baseline", "baseline"), ("group", "group_value"), ("matched", "matched"),
+        ("W", "wins"), ("T", "ties"), ("L", "losses"), ("mean gap %", "mean_gap_pct"),
+        ("median gap %", "median_gap_pct"), ("route diff", "mean_route_difference"),
     ])
-    print(f"\nWrote instances.csv, summary.csv, degeneracy.csv and summary.json to {output_dir}", file=sys.stderr)
+    print_table("Degeneracy (HGS solutions)", degeneracy, [
+        ("demand", "demand_class"), ("case", "case"), ("valid", "valid"), ("chunks/customer", "mean_chunks_per_customer"),
+        ("max chunks/route", "mean_max_chunks_per_route"), ("deliveries/route", "mean_deliveries_per_route"),
+        ("split customers", "mean_split_customer_ratio"), ("routes / LB", "mean_routes_over_lower_bound"),
+        ("weight fill", "mean_weight_fill"), ("volume fill", "mean_volume_fill"),
+        ("gain vs I1+LS %", "mean_gain_vs_i1_ls_pct"),
+    ])
+    print(f"\nWrote instances.csv, summary.csv, degeneracy.csv, pairs.csv and summary.json to {output_dir}", file=sys.stderr)
     return 0
 
 

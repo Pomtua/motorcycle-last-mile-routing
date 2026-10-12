@@ -23,6 +23,7 @@ CASES = (
     "i1_ls_zoned",
     "ortools_split_zoned",
     "hgs",
+    "hgs_fixed",
     "ortools_split_hgs_time",
     "hgs_zoned",
     "ortools_split_zoned_hgs_time",
@@ -56,6 +57,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--instances-dir", type=Path, help="Instance directory (default data/instances)")
     parser.add_argument("--build-dir", type=Path, help="Engine build directory (default engine/build)")
     parser.add_argument("--sizes", type=int, nargs="+", help="Only run these customer counts")
+    parser.add_argument("--demand-classes", nargs="+", help="Only run these demand classes, e.g. D3 D4")
     parser.add_argument("--limit", type=int, help="Stop after this many instances in this invocation")
     return parser.parse_args()
 
@@ -160,7 +162,11 @@ def run_instance(instance: Path, executables: dict, args: argparse.Namespace, lo
             add_skip(name, "no zone penalty without an i1_ls distance scale")
 
     hgs_budget_ms = hgs_budget * 1000.0
-    run("hgs", [executables["hgs"], instance_arg, hgs_budget_arg, "--seed", str(args.hgs_seed)],
+    run("hgs", [executables["hgs"], instance_arg, hgs_budget_arg, "--seed", str(args.hgs_seed),
+                "--split-mode", "dynamic"],
+        requested_time_limit_seconds=hgs_budget)
+    run("hgs_fixed", [executables["hgs"], instance_arg, hgs_budget_arg, "--seed", str(args.hgs_seed),
+                      "--split-mode", "fixed"],
         requested_time_limit_seconds=hgs_budget)
     run("ortools_split_hgs_time", [executables["ortools"], instance_arg, hgs_budget_arg, "--split"],
         budget_source_case="hgs_budget", budget_source_runtime_ms=hgs_budget_ms,
@@ -168,7 +174,8 @@ def run_instance(instance: Path, executables: dict, args: argparse.Namespace, lo
 
     if zone_penalty is not None:
         run("hgs_zoned",
-            [executables["hgs"], instance_arg, hgs_budget_arg, "auto", str(zone_penalty), "--seed", str(args.hgs_seed)],
+            [executables["hgs"], instance_arg, hgs_budget_arg, "auto", str(zone_penalty), "--seed", str(args.hgs_seed),
+             "--split-mode", "dynamic"],
             requested_time_limit_seconds=hgs_budget, zone_configuration=zone_configuration)
         run("ortools_split_zoned_hgs_time",
             [executables["ortools"], instance_arg, hgs_budget_arg, "auto", str(zone_penalty), "--split"],
@@ -203,6 +210,8 @@ def main() -> int:
     instances = sorted(instances_dir.glob("*_instance.json"), key=instance_key)
     if args.sizes:
         instances = [path for path in instances if instance_key(path)[0] in set(args.sizes)]
+    if args.demand_classes:
+        instances = [path for path in instances if instance_key(path)[1] in set(args.demand_classes)]
     if not instances:
         raise ValueError(f"no instances selected in {instances_dir}")
 
