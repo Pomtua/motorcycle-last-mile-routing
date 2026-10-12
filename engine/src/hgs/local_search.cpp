@@ -16,6 +16,35 @@ namespace router::hgs
         {
             throw std::invalid_argument("local search needs at least one move");
         }
+        hasSiblingMoves_ = hasMoves(MoveScope::Sibling);
+        hasSingleMoves_ = hasMoves(MoveScope::Single);
+    }
+
+    bool LocalSearch::hasMoves(MoveScope scope) const
+    {
+        return std::any_of(moves_.begin(), moves_.end(), [scope](const auto &move) { return move->scope() == scope; });
+    }
+
+    bool LocalSearch::routesUnchangedSince(const SearchNode &u, std::uint64_t testedAt)
+    {
+        const auto unchanged = [&](int id) { return routes_.route(routes_.node(id).route).lastModified <= testedAt; };
+        if (!unchanged(u.id))
+        {
+            return false;
+        }
+        for (int neighbour : data_.neighbours(u.customer))
+        {
+            if (!std::all_of(routes_.nodesOf(neighbour).begin(), routes_.nodesOf(neighbour).end(), unchanged))
+            {
+                return false;
+            }
+        }
+        if (!std::all_of(routes_.nodesOf(u.customer).begin(), routes_.nodesOf(u.customer).end(), unchanged))
+        {
+            return false;
+        }
+        const SearchRoute *empty = routes_.firstEmptyRoute();
+        return empty == nullptr || empty->lastModified <= testedAt;
     }
 
     void LocalSearch::rebuildOrder(Rng &rng)
@@ -104,17 +133,25 @@ namespace router::hgs
                     }
                 }
 
-                if (!routes_.node(id).isDepot())
+                if (hasSiblingMoves_ && !routes_.node(id).isDepot())
                 {
                     candidates_ = routes_.nodesOf(routes_.node(id).customer);
                     for (int sibling : candidates_)
                     {
                         SearchNode &u = routes_.node(id);
                         SearchNode &s = routes_.node(sibling);
-                        if (sibling != id && !u.isDepot() && !s.isDepot() && s.customer == u.customer)
+                        if (sibling == id || u.isDepot() || s.isDepot() || s.customer != u.customer)
                         {
-                            improved = tryMoves(u, s, MoveScope::Sibling) || improved;
+                            continue;
                         }
+                        if (pass > 0 &&
+                            routes_.route(u.route).lastModified <= testedAt &&
+                            routes_.route(s.route).lastModified <= testedAt)
+                        {
+                            ++stats_.siblingsSkipped;
+                            continue;
+                        }
+                        improved = tryMoves(u, s, MoveScope::Sibling) || improved;
                     }
                 }
 
@@ -124,9 +161,16 @@ namespace router::hgs
                     improved = tryMoves(routes_.node(id), empty->start, MoveScope::Pair) || improved;
                 }
 
-                if (!routes_.node(id).isDepot())
+                if (hasSingleMoves_ && !routes_.node(id).isDepot())
                 {
-                    improved = tryMoves(routes_.node(id), routes_.node(id), MoveScope::Single) || improved;
+                    if (pass > 0 && routesUnchangedSince(routes_.node(id), testedAt))
+                    {
+                        ++stats_.singlesSkipped;
+                    }
+                    else
+                    {
+                        improved = tryMoves(routes_.node(id), routes_.node(id), MoveScope::Single) || improved;
+                    }
                 }
             }
         }

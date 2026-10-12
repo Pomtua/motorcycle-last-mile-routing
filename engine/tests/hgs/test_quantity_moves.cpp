@@ -321,6 +321,55 @@ namespace
         expect(costsDecrease, "every applied quantity move must strictly reduce the penalized cost");
     }
 
+    bool noImprovingQuantityMoveLeft(SearchRoutes &routes)
+    {
+        for (int id : hgs_test::sortedActiveNodes(routes))
+        {
+            SearchNode &u = routes.node(id);
+            for (int sibling : routes.nodesOf(u.customer))
+            {
+                router::hgs::Transfer transfer;
+                if (sibling != id && transfer.tryApply(u, routes.node(sibling), routes))
+                {
+                    return false;
+                }
+            }
+            const auto plan = router::hgs::SplitInsertion::plan(u, routes);
+            if (plan && plan->delta < -router::hgs::kImprovementEpsilon)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void testDynamicSearchSkipsUnchangedRoutes()
+    {
+        bool optimal = true;
+        std::size_t siblingsSkipped = 0;
+        std::size_t singlesSkipped = 0;
+        for (std::uint32_t seed = 970; seed < 976; ++seed)
+        {
+            std::vector<std::vector<int>> tokenRoutes;
+            const Loaded loaded = makeLoaded(seed, 30, 0.3, tokenRoutes);
+            router::hgs::LocalSearch search(loaded.data, router::hgs::makeMoves(kDynamicMoves));
+            search.setInvariantChecks(true);
+            router::hgs::Individual result = hgs_test::individualFromTokens(loaded.data, tokenRoutes);
+            router::hgs::Rng rng(seed);
+            router::hgs::Deadline noDeadline;
+            search.run(result, loaded.penalties, rng, noDeadline);
+            siblingsSkipped += search.stats().siblingsSkipped;
+            singlesSkipped += search.stats().singlesSkipped;
+
+            SearchRoutes routes(loaded.data);
+            routes.load(result, loaded.penalties);
+            optimal = optimal && noImprovingQuantityMoveLeft(routes);
+        }
+        expect(optimal, "dynamic local search must stop where no transfer or split insertion improves");
+        expect(siblingsSkipped > 0 && singlesSkipped > 0,
+               "later passes must skip transfers and split insertions whose routes did not change");
+    }
+
     void testSplitBeatsFixedChunks()
     {
         const router::Instance inst = hgs_test::makeClusterFarFromDepot(3, 3);
@@ -387,6 +436,7 @@ int main()
     testTransferAgainstFullEvaluation();
     testSplitInsertionPlans();
     testMovesKeepInvariants();
+    testDynamicSearchSkipsUnchangedRoutes();
     testSplitBeatsFixedChunks();
     testMinimumDeliveryBlocksSmallSplits();
     return hgs_test::finish("hgs quantity_moves");

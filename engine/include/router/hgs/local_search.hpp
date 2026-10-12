@@ -21,6 +21,8 @@ namespace router::hgs
         std::size_t runs = 0;
         std::size_t passes = 0;
         std::size_t pairsSkipped = 0;
+        std::size_t siblingsSkipped = 0;
+        std::size_t singlesSkipped = 0;
         std::size_t interruptedByDeadline = 0;
         StageStats time;
     };
@@ -40,6 +42,8 @@ namespace router::hgs
 
     private:
         bool tryMoves(SearchNode &u, SearchNode &v, MoveScope scope);
+        bool hasMoves(MoveScope scope) const;
+        bool routesUnchangedSince(const SearchNode &u, std::uint64_t testedAt);
         void rebuildOrder(Rng &rng);
 
         const ProblemData &data_;
@@ -50,6 +54,8 @@ namespace router::hgs
         std::uint64_t orderVersion_ = 0;
         std::vector<std::uint64_t> lastTested_;
         LocalSearchStats stats_;
+        bool hasSiblingMoves_ = false;
+        bool hasSingleMoves_ = false;
         bool checkInvariants_ = false;
     };
 }

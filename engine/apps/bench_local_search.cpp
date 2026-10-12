@@ -112,6 +112,8 @@ int main(int argc, char **argv)
         std::cout << "feasible            = " << feasible << " / " << decoded << "\n";
         std::cout << "avg passes          = " << static_cast<double>(stats.passes) / decoded << "\n";
         std::cout << "pairs skipped       = " << stats.pairsSkipped << "\n";
+        std::cout << "siblings skipped    = " << stats.siblingsSkipped << "\n";
+        std::cout << "singles skipped     = " << stats.singlesSkipped << "\n";
         for (const auto &move : search.moves())
         {
             const auto &moveStats = move->stats();

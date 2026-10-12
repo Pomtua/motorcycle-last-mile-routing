@@ -92,6 +92,8 @@ namespace
                 {"runs", result.localSearch.runs},
                 {"passes", result.localSearch.passes},
                 {"pairs_skipped", result.localSearch.pairsSkipped},
+                {"siblings_skipped", result.localSearch.siblingsSkipped},
+                {"singles_skipped", result.localSearch.singlesSkipped},
                 {"interrupted_by_deadline", result.localSearch.interruptedByDeadline},
                 {"total_ms", result.localSearch.time.totalMs}}},
             {"moves", moves},
