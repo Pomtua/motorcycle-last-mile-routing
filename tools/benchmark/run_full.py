@@ -29,6 +29,15 @@ CASES = (
     "ortools_split_zoned_hgs_time",
 )
 
+CASE_DEPENDENCIES = {
+    "ortools_raw": "i1_ls",
+    "ortools_split": "i1_ls",
+    "i1_ls_zoned": "i1_ls",
+    "ortools_split_zoned": "i1_ls_zoned",
+    "hgs_zoned": "i1_ls",
+    "ortools_split_zoned_hgs_time": "i1_ls",
+}
+
 
 def positive_float(value: str) -> float:
     parsed = float(value)
@@ -59,7 +68,18 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--sizes", type=int, nargs="+", help="Only run these customer counts")
     parser.add_argument("--demand-classes", nargs="+", help="Only run these demand classes, e.g. D3 D4")
     parser.add_argument("--limit", type=int, help="Stop after this many instances in this invocation")
-    return parser.parse_args()
+    parser.add_argument("--cases", nargs="+", choices=CASES,
+                        help="Only run these cases; cases that set another case's budget or zone penalty must be included")
+    args = parser.parse_args()
+    selected = set(args.cases or CASES)
+    for case in selected:
+        dependency = CASE_DEPENDENCIES.get(case)
+        while dependency is not None:
+            if dependency not in selected:
+                parser.error(f"{case} needs {dependency}; add it to --cases")
+            dependency = CASE_DEPENDENCIES.get(dependency)
+    args.cases = [case for case in CASES if case in selected]
+    return args
 
 
 def instance_key(path: Path) -> tuple:
@@ -108,13 +128,17 @@ def run_instance(instance: Path, executables: dict, args: argparse.Namespace, lo
     hgs_budget = customers * args.hgs_seconds_per_customer
     hgs_budget_arg = format_seconds(hgs_budget)
 
-    def run(name: str, command: list[str], **context) -> dict:
+    def run(name: str, command: list[str], **context) -> dict | None:
+        if name not in args.cases:
+            return None
         log(name)
         record = run_case(name, command, **context)
         records.append(record)
         return record
 
     def add_skip(name: str, reason: str) -> None:
+        if name not in args.cases:
+            return
         log(f"{name} (skipped: {reason})")
         records.append(skipped(name, reason))
 
@@ -222,7 +246,7 @@ def main() -> int:
         "hgs_seconds_per_customer": args.hgs_seconds_per_customer,
         "hgs_seed": args.hgs_seed,
         "instances_dir": str(instances_dir),
-        "cases": list(CASES),
+        "cases": args.cases,
     }
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

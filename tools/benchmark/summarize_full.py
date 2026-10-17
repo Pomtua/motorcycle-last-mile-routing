@@ -17,7 +17,10 @@ GROUPINGS = ("overall", "demand_class", "size", "spatial_class", "time_window")
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize a full benchmark sweep produced by run_full.py.")
-    parser.add_argument("output_dir", type=Path, help="Directory given to run_full.py --output-dir")
+    parser.add_argument("output_dir", type=Path, help="Directory given to run_full.py --output-dir; summaries are written here")
+    parser.add_argument("--runs-from", type=Path, nargs="+",
+                        help="Sweep directories to merge in order, a later directory replacing the same case of an instance "
+                             "(default: output_dir only)")
     return parser.parse_args()
 
 
@@ -61,15 +64,22 @@ def instance_profile(path: Path) -> dict:
     }
 
 
-def load_sweep(output_dir: Path) -> list[dict]:
+def merged_records(sweep_dirs: list[Path]) -> dict[str, dict[str, dict]]:
+    merged: dict[str, dict[str, dict]] = {}
+    for sweep_dir in sweep_dirs:
+        for run_file in sorted((sweep_dir / "runs").glob("*.jsonl")):
+            for line in run_file.read_text(encoding="utf-8").splitlines():
+                if line:
+                    record = json.loads(line)
+                    merged.setdefault(run_file.name, {})[record["case"]] = record
+    return merged
+
+
+def load_sweep(sweep_dirs: list[Path]) -> list[dict]:
     rows = []
-    for run_file in sorted((output_dir / "runs").glob("*.jsonl")):
-        records = [json.loads(line) for line in run_file.read_text(encoding="utf-8").splitlines() if line]
-        if not records:
-            continue
-        instance = Path(records[0]["instance"])
+    for _, by_case in sorted(merged_records(sweep_dirs).items()):
+        instance = Path(next(iter(by_case.values()))["instance"])
         profile = instance_profile(instance)
-        by_case = {record["case"]: record for record in records}
         nn_result = (by_case.get("nn") or {}).get("result") or {}
         chunk_count = nn_result.get("chunk_count")
         ls_result = (by_case.get("i1_ls") or {}).get("result") or {}
@@ -259,9 +269,11 @@ def print_table(title: str, rows: list[dict], columns: list[tuple[str, str]]) ->
 def main() -> int:
     args = parse_arguments()
     output_dir = args.output_dir.resolve()
-    rows = load_sweep(output_dir)
+    sweep_dirs = [path.resolve() for path in (args.runs_from or [output_dir])]
+    rows = load_sweep(sweep_dirs)
     if not rows:
-        raise ValueError(f"no completed instances in {output_dir / 'runs'}")
+        raise ValueError(f"no completed instances in {', '.join(str(path / 'runs') for path in sweep_dirs)}")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     solvers = summarize_solvers(rows)
     degeneracy = summarize_degeneracy(rows)
