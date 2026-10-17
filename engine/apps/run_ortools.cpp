@@ -41,6 +41,7 @@ namespace
 {
     constexpr double kWeightScale = 100.0;
     constexpr double kVolumeScale = 10000.0;
+    constexpr double kTimeScale = 10.0;
     constexpr double kScaleRoundingSlack = 1e-6;
 }
 
@@ -225,16 +226,19 @@ int main(int argc, char **argv)
             static_cast<int64_t>(std::floor(inst.fleet.volumeCapacity * kVolumeScale)));
         routing.AddDimensionWithVehicleCapacity(volumeCallback, int64_t{0}, volumeCapacities, true, "Volume");
 
-        const int64_t horizon = static_cast<int64_t>(std::ceil(inst.horizon));
+        const auto timeUp = [](double seconds)
+        { return static_cast<int64_t>(std::ceil(seconds * kTimeScale - kScaleRoundingSlack)); };
+        const auto timeDown = [](double seconds)
+        { return static_cast<int64_t>(std::floor(seconds * kTimeScale + kScaleRoundingSlack)); };
+
+        const int64_t horizon = timeDown(inst.horizon);
         const int timeCallback = routing.RegisterTransitCallback(
             [&](int64_t from, int64_t to) -> int64_t
             {
                 const int a = origNode[static_cast<std::size_t>(manager.IndexToNode(from).value())];
                 const int b = origNode[static_cast<std::size_t>(manager.IndexToNode(to).value())];
-                const int64_t travel = static_cast<int64_t>(
-                    std::ceil(inst.durationMatrix[static_cast<std::size_t>(a)]
-                                                 [static_cast<std::size_t>(b)]));
-                return travel + inst.nodes[static_cast<std::size_t>(a)].serviceTime;
+                return timeUp(inst.durationMatrix[static_cast<std::size_t>(a)][static_cast<std::size_t>(b)] +
+                              inst.nodes[static_cast<std::size_t>(a)].serviceTime);
             });
         routing.AddDimension(timeCallback, horizon, horizon, true, "Time");
         const RoutingDimension &timeDimension = routing.GetDimensionOrDie("Time");
@@ -244,7 +248,7 @@ int main(int argc, char **argv)
             const router::Node &node =
                 inst.nodes[static_cast<std::size_t>(chunks[static_cast<std::size_t>(i)].nodeIndex)];
             const int64_t index = manager.NodeToIndex(RoutingIndexManager::NodeIndex(i + 1));
-            timeDimension.CumulVar(index)->SetRange(node.twStart, node.twEnd);
+            timeDimension.CumulVar(index)->SetRange(timeUp(node.twStart), timeDown(node.twEnd));
         }
 
         operations_research::Solver *const solver = routing.solver();
