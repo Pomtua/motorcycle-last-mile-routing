@@ -1,0 +1,9 @@
+candidate,baseline,group_by,group_value,matched,wins,ties,losses,mean_gap_pct,median_gap_pct,mean_route_difference
+hgs,hgs_fixed,overall,all,1,1,0,0,-2.5667860629925965,-2.5667860629925965,-31.0
+hgs,hgs_fixed,demand_class,D4,1,1,0,0,-2.5667860629925965,-2.5667860629925965,-31.0
+hgs,ortools_split_hgs_time,overall,all,1,1,0,0,-2.8557519401137514,-2.8557519401137514,-11.0
+hgs,ortools_split_hgs_time,demand_class,D4,1,1,0,0,-2.8557519401137514,-2.8557519401137514,-11.0
+hgs_fixed,ortools_split_hgs_time,overall,all,1,1,0,0,-0.29657841042580985,-0.29657841042580985,20.0
+hgs_fixed,ortools_split_hgs_time,demand_class,D4,1,1,0,0,-0.29657841042580985,-0.29657841042580985,20.0
+hgs_zoned,ortools_split_zoned_hgs_time,overall,all,1,1,0,0,-2.3671814899638703,-2.3671814899638703,-16.0
+hgs_zoned,ortools_split_zoned_hgs_time,demand_class,D4,1,1,0,0,-2.3671814899638703,-2.3671814899638703,-16.0

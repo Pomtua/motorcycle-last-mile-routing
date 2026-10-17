@@ -28,7 +28,15 @@ data/master_pool/*.csv
 data/instances/*.json
 
 # Generated benchmark results
-results/
+results/**
+!results/**/
+!results/benchmark/**
+!results/*/summary.csv
+!results/*/summary.json
+!results/*/pairs.csv
+!results/*/degeneracy.csv
+!results/*/instances.csv
+!results/*/manifest.json
 
 
 # Engine
