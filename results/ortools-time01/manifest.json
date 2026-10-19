@@ -1,0 +1,20 @@
+{
+  "benchmark": "full_sweep",
+  "created_at": "2026-10-17T13:00:23.548098+00:00",
+  "git_commit": "36c77eb5ae015d0caa1c52bc564f80a0c89c24f2",
+  "settings": {
+    "penalty_alpha": 0.25,
+    "hgs_seconds_per_customer": 0.1,
+    "hgs_seed": 42,
+    "instances_dir": "/home/pomtua/projects/seniorProject/motorcycle-last-mile-routing-start-again/data/instances",
+    "cases": [
+      "i1_ls",
+      "ortools_raw",
+      "ortools_split",
+      "i1_ls_zoned",
+      "ortools_split_zoned",
+      "ortools_split_hgs_time",
+      "ortools_split_zoned_hgs_time"
+    ]
+  }
+}
