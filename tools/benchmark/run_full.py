@@ -67,6 +67,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--build-dir", type=Path, help="Engine build directory (default engine/build)")
     parser.add_argument("--sizes", type=int, nargs="+", help="Only run these customer counts")
     parser.add_argument("--demand-classes", nargs="+", help="Only run these demand classes, e.g. D3 D4")
+    parser.add_argument("--seeds", type=int, nargs="+", help="Only run instances generated with these seeds, e.g. 42")
     parser.add_argument("--limit", type=int, help="Stop after this many instances in this invocation")
     parser.add_argument("--cases", nargs="+", choices=CASES,
                         help="Only run these cases; cases that set another case's budget or zone penalty must be included")
@@ -236,6 +237,8 @@ def main() -> int:
         instances = [path for path in instances if instance_key(path)[0] in set(args.sizes)]
     if args.demand_classes:
         instances = [path for path in instances if instance_key(path)[1] in set(args.demand_classes)]
+    if args.seeds:
+        instances = [path for path in instances if instance_key(path)[4] in set(args.seeds)]
     if not instances:
         raise ValueError(f"no instances selected in {instances_dir}")
 
