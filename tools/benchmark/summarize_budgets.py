@@ -65,6 +65,7 @@ def summarize(rows_by_budget: dict[float, list[dict]]) -> list[dict]:
                 record[f"{case}_valid"] = len(valid)
                 record[f"{case}_mean_gap_vs_i1_ls_pct"] = mean([row["gap_vs_i1_ls_pct"] for row in valid if row["gap_vs_i1_ls_pct"] is not None])
                 record[f"{case}_median_runtime_ms"] = median([row["runtime_ms"] for row in members if row["runtime_ms"] is not None])
+                record[f"{case}_total_runtime_ms"] = sum(row["runtime_ms"] for row in members if row["runtime_ms"] is not None)
                 if case in ZONED_CASES:
                     record[f"{case}_mean_route_zone_excess"] = mean([row["route_zone_excess"] for row in valid if row["route_zone_excess"] is not None])
             for candidate, baseline in PAIRS:
