@@ -26,6 +26,8 @@ infra/osrm/cache/*.json
 # Generated datasets
 data/master_pool/*.csv
 data/instances/*.json
+data/instances-v1/
+data/instances_csv/*.csv
 
 # Generated benchmark results
 results/**
@@ -45,3 +47,10 @@ build/
 *.obj
 compile_commands.json
 third_party/
+
+# Web
+node_modules/
+dist/
+.next/
+next-env.d.ts
+*.tsbuildinfo
