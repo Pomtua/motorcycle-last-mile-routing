@@ -5,45 +5,20 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <map>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
-#include "ortools/constraint_solver/constraint_solver.h"
-#include "ortools/constraint_solver/routing.h"
-#include "ortools/constraint_solver/routing_enums.pb.h"
-#include "ortools/constraint_solver/routing_index_manager.h"
-#include "ortools/constraint_solver/routing_parameters.h"
-
 #include "router/cost.hpp"
 #include "router/instance_io.hpp"
+#include "router/ortools_solver.hpp"
 #include "router/solution.hpp"
 #include "router/split.hpp"
 #include "router/validate.hpp"
 #include "router/zones.hpp"
-
-using operations_research::Assignment;
-using operations_research::DefaultRoutingSearchParameters;
-using operations_research::FirstSolutionStrategy;
-using operations_research::LocalSearchMetaheuristic;
-using operations_research::RoutingDimension;
-using operations_research::RoutingIndexManager;
-using operations_research::RoutingModel;
-using operations_research::RoutingSearchParameters;
-
-namespace
-{
-    constexpr double kWeightScale = 100.0;
-    constexpr double kVolumeScale = 10000.0;
-    constexpr double kTimeScale = 10.0;
-    constexpr double kScaleRoundingSlack = 1e-6;
-}
 
 int main(int argc, char **argv)
 {
@@ -173,104 +148,6 @@ int main(int argc, char **argv)
         }
         const int numChunks = static_cast<int>(chunks.size());
 
-        std::vector<int> origNode(static_cast<std::size_t>(numChunks) + 1);
-        origNode[0] = 0;
-        for (int i = 0; i < numChunks; ++i)
-        {
-            origNode[static_cast<std::size_t>(i) + 1] =
-                chunks[static_cast<std::size_t>(i)].nodeIndex;
-        }
-
-        const RoutingIndexManager::NodeIndex depot(0);
-        RoutingIndexManager manager(numChunks + 1, inst.fleet.size, depot);
-        RoutingModel routing(manager);
-
-        const int distanceCallback = routing.RegisterTransitCallback(
-            [&](int64_t from, int64_t to) -> int64_t
-            {
-                const int a = origNode[static_cast<std::size_t>(manager.IndexToNode(from).value())];
-                const int b = origNode[static_cast<std::size_t>(manager.IndexToNode(to).value())];
-                return std::llround(inst.distanceMatrix[static_cast<std::size_t>(a)]
-                                                       [static_cast<std::size_t>(b)]);
-            });
-        routing.SetArcCostEvaluatorOfAllVehicles(distanceCallback);
-
-        const int weightCallback = routing.RegisterUnaryTransitCallback(
-            [&](int64_t from) -> int64_t
-            {
-                const int node = manager.IndexToNode(from).value();
-                if (node == 0)
-                {
-                    return 0;
-                }
-                return std::llround(chunks[static_cast<std::size_t>(node - 1)].weight * kWeightScale);
-            });
-        const std::vector<int64_t> weightCapacities(
-            static_cast<std::size_t>(inst.fleet.size),
-            static_cast<int64_t>(std::floor(inst.fleet.weightCapacity * kWeightScale)));
-        routing.AddDimensionWithVehicleCapacity(weightCallback, int64_t{0}, weightCapacities, true, "Weight");
-
-        const int volumeCallback = routing.RegisterUnaryTransitCallback(
-            [&](int64_t from) -> int64_t
-            {
-                const int node = manager.IndexToNode(from).value();
-                if (node == 0)
-                {
-                    return 0;
-                }
-                return static_cast<int64_t>(
-                    std::ceil(chunks[static_cast<std::size_t>(node - 1)].volume * kVolumeScale - kScaleRoundingSlack));
-            });
-        const std::vector<int64_t> volumeCapacities(
-            static_cast<std::size_t>(inst.fleet.size),
-            static_cast<int64_t>(std::floor(inst.fleet.volumeCapacity * kVolumeScale)));
-        routing.AddDimensionWithVehicleCapacity(volumeCallback, int64_t{0}, volumeCapacities, true, "Volume");
-
-        const auto timeUp = [](double seconds)
-        { return static_cast<int64_t>(std::ceil(seconds * kTimeScale - kScaleRoundingSlack)); };
-        const auto timeDown = [](double seconds)
-        { return static_cast<int64_t>(std::floor(seconds * kTimeScale + kScaleRoundingSlack)); };
-
-        const int64_t horizon = timeDown(inst.horizon);
-        const int timeCallback = routing.RegisterTransitCallback(
-            [&](int64_t from, int64_t to) -> int64_t
-            {
-                const int a = origNode[static_cast<std::size_t>(manager.IndexToNode(from).value())];
-                const int b = origNode[static_cast<std::size_t>(manager.IndexToNode(to).value())];
-                return timeUp(inst.durationMatrix[static_cast<std::size_t>(a)][static_cast<std::size_t>(b)] +
-                              inst.nodes[static_cast<std::size_t>(a)].serviceTime);
-            });
-        routing.AddDimension(timeCallback, horizon, horizon, true, "Time");
-        const RoutingDimension &timeDimension = routing.GetDimensionOrDie("Time");
-
-        for (int i = 0; i < numChunks; ++i)
-        {
-            const router::Node &node =
-                inst.nodes[static_cast<std::size_t>(chunks[static_cast<std::size_t>(i)].nodeIndex)];
-            const int64_t index = manager.NodeToIndex(RoutingIndexManager::NodeIndex(i + 1));
-            timeDimension.CumulVar(index)->SetRange(timeUp(node.twStart), timeDown(node.twEnd));
-        }
-
-        operations_research::Solver *const solver = routing.solver();
-        std::map<int, std::vector<int>> chunksByCustomer;
-        for (int i = 0; i < numChunks; ++i)
-        {
-            chunksByCustomer[chunks[static_cast<std::size_t>(i)].nodeIndex].push_back(i);
-        }
-        for (const auto &[customer, chunkIds] : chunksByCustomer)
-        {
-            for (std::size_t a = 0; a < chunkIds.size(); ++a)
-            {
-                for (std::size_t b = a + 1; b < chunkIds.size(); ++b)
-                {
-                    const int64_t indexA = manager.NodeToIndex(RoutingIndexManager::NodeIndex(chunkIds[a] + 1));
-                    const int64_t indexB = manager.NodeToIndex(RoutingIndexManager::NodeIndex(chunkIds[b] + 1));
-                    solver->AddConstraint(solver->MakeNonEquality(
-                        routing.VehicleVar(indexA), routing.VehicleVar(indexB)));
-                }
-            }
-        }
-
         std::vector<int> zoneOf;
         double zonePreprocessingMs = 0.0;
         if (zoningEnabled)
@@ -304,50 +181,11 @@ int main(int argc, char **argv)
                 throw std::invalid_argument(
                     "zone_penalty is too large for num_zones");
             }
-
-            routing.AddRouteConstraint(
-                [&](const std::vector<int64_t> &route)
-                    -> std::optional<int64_t>
-                {
-                    std::unordered_set<int> zones;
-                    for (const int64_t index : route)
-                    {
-                        const int node =
-                            manager.IndexToNode(index).value();
-                        if (node == 0)
-                        {
-                            continue;
-                        }
-
-                        const int customer =
-                            origNode[static_cast<std::size_t>(node)];
-                        zones.insert(
-                            zoneOf[static_cast<std::size_t>(customer)]);
-                    }
-
-                    if (zones.empty())
-                    {
-                        return int64_t{0};
-                    }
-
-                    return zonePenalty *
-                           static_cast<int64_t>(zones.size() - 1);
-                },
-                true);
         }
 
-        RoutingSearchParameters searchParameters = DefaultRoutingSearchParameters();
-        searchParameters.set_first_solution_strategy(FirstSolutionStrategy::PATH_CHEAPEST_ARC);
-        searchParameters.set_local_search_metaheuristic(LocalSearchMetaheuristic::GUIDED_LOCAL_SEARCH);
-        searchParameters.mutable_time_limit()->set_seconds(
-            timeLimitNs / 1000000000);
-        searchParameters.mutable_time_limit()->set_nanos(
-            static_cast<int32_t>(timeLimitNs % 1000000000));
-
-        const auto t0 = std::chrono::steady_clock::now();
-        const Assignment *solution = routing.SolveWithParameters(searchParameters);
-        const auto t1 = std::chrono::steady_clock::now();
-        const double solveMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        const router::OrToolsResult orTools = router::solveWithOrTools(
+            inst, chunks, timeLimitSeconds, zoneOf, zonePenalty);
+        const double solveMs = orTools.solveMs;
 
         std::ifstream instanceFile(positionalArgs[0]);
         nlohmann::json instanceJson;
@@ -388,7 +226,7 @@ int main(int argc, char **argv)
             {"zone_preprocessing_ms", zoningEnabled
                                          ? nlohmann::json(zonePreprocessingMs)
                                          : nlohmann::json(nullptr)},
-            {"solved", solution != nullptr},
+            {"solved", orTools.solved},
             {"valid", nullptr},
             {"distance_cost", nullptr},
             {"route_count", nullptr},
@@ -402,7 +240,7 @@ int main(int argc, char **argv)
             {"runtime_ms", solveMs},
             {"runtime_scope", "search_only"},
             {"time_budget_ms", timeLimitMs},
-            {"status", static_cast<int>(routing.status())},
+            {"status", orTools.status},
             {"error", nullptr}};
 
         std::cout << "n              = " << inst.n << "\n";
@@ -428,35 +266,16 @@ int main(int argc, char **argv)
                       << zonePreprocessingMs << " ms\n";
         }
 
-        if (solution == nullptr)
+        if (!orTools.solved)
         {
             std::cout << "OR-Tools       = NO SOLUTION FOUND (status "
-                      << static_cast<int>(routing.status()) << ")\n";
+                      << orTools.status << ")\n";
             std::cout << "solve time     = " << solveMs << " ms\n";
             std::cout << "RESULT_JSON " << runResult.dump() << "\n";
             return 1;
         }
 
-        router::Solution sol;
-        for (int v = 0; v < inst.fleet.size; ++v)
-        {
-            if (!routing.IsVehicleUsed(*solution, v))
-            {
-                continue;
-            }
-            router::Route route;
-            int64_t index = solution->Value(routing.NextVar(routing.Start(v)));
-            while (!routing.IsEnd(index))
-            {
-                const int node = manager.IndexToNode(index).value();
-                route.stops.push_back(chunks[static_cast<std::size_t>(node - 1)]);
-                index = solution->Value(routing.NextVar(index));
-            }
-            if (!route.stops.empty())
-            {
-                sol.routes.push_back(std::move(route));
-            }
-        }
+        const router::Solution &sol = orTools.solution;
 
         const router::ValidationReport report = router::validate(inst, sol);
         const double cost = router::computeCost(inst, sol);
@@ -490,7 +309,7 @@ int main(int argc, char **argv)
                 std::cout << "vs reference   = " << gapPct << " %\n";
             }
         }
-        std::cout << "or-tools status= " << static_cast<int>(routing.status()) << "\n";
+        std::cout << "or-tools status= " << orTools.status << "\n";
         std::cout << "solve time     = " << solveMs << " ms\n";
 
         if (zoningEnabled)

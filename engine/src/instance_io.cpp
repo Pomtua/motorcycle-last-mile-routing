@@ -3,8 +3,6 @@
 #include <fstream>
 #include <stdexcept>
 
-#include <nlohmann/json.hpp>
-
 namespace router
 {
     Instance loadInstance(const std::string &path)
@@ -25,6 +23,11 @@ namespace router
             throw std::runtime_error("loadInstance: invalid JSON in " + path + ": " + e.what());
         }
 
+        return instanceFromJson(j, path);
+    }
+
+    Instance instanceFromJson(const nlohmann::json &j, const std::string &source)
+    {
         Instance inst;
 
         const auto &meta = j.at("meta");
@@ -62,11 +65,19 @@ namespace router
         {
             throw std::runtime_error(
                 "loadInstance: nodes.size()=" + std::to_string(inst.nodes.size()) +
-                " but meta.n+1=" + std::to_string(expectedSize) + " in " + path);
+                " but meta.n+1=" + std::to_string(expectedSize) + " in " + source);
         }
         if (inst.durationMatrix.size() != expectedSize || inst.distanceMatrix.size() != expectedSize)
         {
-            throw std::runtime_error("loadInstance: matrix dimensions do not match nodes.size() in " + path);
+            throw std::runtime_error("loadInstance: matrix dimensions do not match nodes.size() in " + source);
+        }
+        for (std::size_t row = 0; row < expectedSize; ++row)
+        {
+            if (inst.durationMatrix[row].size() != expectedSize || inst.distanceMatrix[row].size() != expectedSize)
+            {
+                throw std::runtime_error("loadInstance: matrix row " + std::to_string(row) +
+                                         " does not have nodes.size() columns in " + source);
+            }
         }
 
         return inst;

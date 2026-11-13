@@ -37,6 +37,7 @@ add_library(router_core
     src/insertion.cpp
     src/solomon_i1.cpp
     src/local_search.cpp
+    src/schedule.cpp
     src/hgs/problem_data.cpp
     src/hgs/cost_model.cpp
     src/hgs/search_context.cpp
@@ -86,15 +87,25 @@ target_link_libraries(bench_split PRIVATE router_core)
 add_executable(bench_local_search apps/bench_local_search.cpp)
 target_link_libraries(bench_local_search PRIVATE router_core)
 
+add_executable(solve apps/solve.cpp)
+target_link_libraries(solve PRIVATE router_core nlohmann_json::nlohmann_json)
+
 option(WITH_ORTOOLS "Build the OR-Tools comparison bridge (run_ortools)" OFF)
 
 if(WITH_ORTOOLS)
     list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/third_party/ortools")
     find_package(ortools CONFIG REQUIRED)
 
+    add_library(router_ortools src/ortools_solver.cpp)
+    target_link_libraries(router_ortools PUBLIC router_core ortools::ortools)
+
     add_executable(run_ortools apps/run_ortools.cpp)
-    target_link_libraries(run_ortools PRIVATE router_core nlohmann_json::nlohmann_json ortools::ortools)
+    target_link_libraries(run_ortools PRIVATE router_ortools nlohmann_json::nlohmann_json)
     target_link_options(run_ortools PRIVATE -fuse-ld=mold)
+
+    target_link_libraries(solve PRIVATE router_ortools)
+    target_compile_definitions(solve PRIVATE ROUTER_WITH_ORTOOLS)
+    target_link_options(solve PRIVATE -fuse-ld=mold)
 endif()
 
 if(BUILD_TESTING)
@@ -105,11 +116,15 @@ if(BUILD_TESTING)
     target_link_libraries(test_local_search PRIVATE router_core)
 
     add_test(NAME zones COMMAND test_zones)
+
+    add_executable(test_schedule tests/test_schedule.cpp)
+    target_link_libraries(test_schedule PRIVATE router_core)
+    add_test(NAME schedule COMMAND test_schedule)
     add_test(
         NAME local_search
         COMMAND test_local_search
-            "${PROJECT_SOURCE_DIR}/../data/instances/C_D1_n20_loose_s42_instance.json"
-            "${PROJECT_SOURCE_DIR}/../data/instances/R_D1_n100_tight_s42_instance.json"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/zone_search_instance.json"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/fleet_repair_instance.json"
     )
 
     set(HGS_TEST_MODULES
