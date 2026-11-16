@@ -1,0 +1,12 @@
+**
+!engine/CMakeLists.txt
+!engine/include/**
+!engine/src/**
+!engine/apps/**
+!engine/scripts/**
+!backend/package.json
+!backend/pnpm-lock.yaml
+!backend/tsconfig.json
+!backend/tsconfig.build.json
+!backend/src/**
+!backend/migrations/**
