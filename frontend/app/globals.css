@@ -1,0 +1,96 @@
+@import 'tailwindcss';
+@import 'leaflet/dist/leaflet.css';
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --color-primary: #1d4ed8;
+  --color-primary-tint: #eaf1ff;
+  --color-page: #f1f5f9;
+  --color-line: #e2e8f0;
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-zebra: #f8fafc;
+  --color-accent-blue: #2563eb;
+  --color-accent-slate: #475569;
+  --color-accent-orange: #ea580c;
+  --color-accent-green: #16a34a;
+  --color-accent-red: #dc2626;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #ffffff;
+  color: var(--color-ink);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.data-table thead th {
+  background: var(--color-ink);
+  color: #ffffff;
+  font-weight: 600;
+  padding: 0.75rem 1rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.data-table tbody td {
+  padding: 0.625rem 1rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.data-table.compact thead th,
+.data-table.compact tbody td {
+  padding: 0.5rem 0.625rem;
+}
+
+.data-table.compact thead th {
+  white-space: normal;
+}
+
+.data-table tbody tr:nth-child(even) {
+  background: var(--color-zebra);
+}
+
+.data-table tbody tr.clickable {
+  cursor: pointer;
+}
+
+.data-table tbody tr.clickable:hover {
+  background: var(--color-primary-tint);
+}
+
+.data-table tbody tr.selected {
+  background: var(--color-primary-tint);
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.stop-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: #ffffff;
+  font: 600 10px/1 var(--font-inter), sans-serif;
+  color: var(--color-ink);
+}
+
+.depot-marker {
+  border-radius: 9999px;
+  background: #facc15;
+  border: 3px solid #0f172a;
+  box-shadow: 0 0 0 3px #ffffff;
+}
+
+.leaflet-container {
+  font-family: var(--font-inter), sans-serif;
+}
