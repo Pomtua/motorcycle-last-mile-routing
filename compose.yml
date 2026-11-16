@@ -41,7 +41,10 @@ services:
     entrypoint: ["osm2pgsql"]
 
   osrm:
-    image: ghcr.io/project-osrm/osrm-backend:26.6.5-debian
+    image: motorcycle-osrm:26.6.5-table-nonnegative-trial1
+    build:
+      context: ./infra/osrm
+      dockerfile: Dockerfile.patched
     container_name: osrm_server
     restart: unless-stopped
     ports:
@@ -51,6 +54,43 @@ services:
     networks:
       - osm_net
     command: osrm-routed --algorithm mld --max-table-size 2000 /data/thailand-latest.osrm
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: routing_backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - OSRM_URL=http://osrm:5000
+      - ENGINE_CONCURRENCY=${ENGINE_CONCURRENCY:-}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./results:/app/results:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      osrm:
+        condition: service_started
+    networks:
+      - osm_net
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000/api}
+    container_name: routing_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - osm_net
 
 networks:
   osm_net:
