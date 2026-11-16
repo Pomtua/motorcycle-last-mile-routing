@@ -322,7 +322,6 @@ namespace
                 {"vehicle", r},
                 {"distance", schedule.distance},
                 {"duration", schedule.returnTime},
-                {"return_time", schedule.returnTime},
                 {"load_weight", schedule.loadWeight},
                 {"load_volume", schedule.loadVolume},
                 {"stops", std::move(stops)}});
