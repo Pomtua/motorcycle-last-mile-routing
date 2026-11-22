@@ -70,6 +70,33 @@ export default function Dashboard() {
     setProblem({ title, message: (error as Error).message, errors: apiError?.errors });
   }, []);
 
+  const showRun = useCallback((detail: RunDetail) => {
+    setRun(detail);
+    setFleet({
+      size: detail.fleet_size,
+      weightKg: detail.weight_capacity,
+      volumeL: detail.volume_capacity_l,
+      shiftStart: detail.shift_start,
+      shiftEnd: detail.shift_end,
+    });
+    setZoning({ enabled: detail.zoning, numZones: detail.num_zones ?? 'auto', penaltyAlpha: detail.zone_penalty_alpha });
+    const settings = detail.jobs.map((job) => job.settings);
+    const chosen = settings.map((job) => job.algorithm).filter((algorithm) => algorithm !== 'nn' || settings.length === 1);
+    setSelected(new Set(chosen));
+    const hgs = settings.find((job) => job.algorithm === 'hgs');
+    setSolver((current) => ({
+      seed: detail.seed,
+      timeBudgetPerCustomer: hgs?.algorithm === 'hgs' ? hgs.timeBudgetPerCustomer : current.timeBudgetPerCustomer,
+      splitMode: hgs?.algorithm === 'hgs' ? hgs.splitMode : current.splitMode,
+    }));
+    const ortools = settings.find((job) => job.algorithm === 'ortools');
+    if (ortools?.algorithm === 'ortools') {
+      setOrTools((current) =>
+        ortools.timeLimit === 'match_hgs' ? { ...current, mode: 'match_hgs' } : { mode: 'custom', seconds: ortools.timeLimit },
+      );
+    }
+  }, []);
+
   const refreshDatasets = useCallback(async () => {
     const list = await api.datasets();
     setDatasets(list);
@@ -97,6 +124,12 @@ export default function Dashboard() {
           return;
         }
         setDataset(detail);
+        setHistory(runs);
+        if (runs[0]) {
+          showRun(runs[0]);
+          return;
+        }
+        setRun(null);
         if (detail.defaults) {
           const d = detail.defaults;
           setFleet({
@@ -107,14 +140,12 @@ export default function Dashboard() {
             shiftEnd: d.shiftEnd,
           });
         }
-        setHistory(runs);
-        setRun(runs[0] ?? null);
       })
       .catch((error) => !cancelled && report('Cannot load the dataset', error));
     return () => {
       cancelled = true;
     };
-  }, [datasetId, report]);
+  }, [datasetId, report, showRun]);
 
   const active = isActive(run);
   const runId = run?.id ?? null;
@@ -224,7 +255,7 @@ export default function Dashboard() {
   const openRun = (id: string) => {
     const found = history.find((item) => item.id === id);
     if (found) {
-      setRun(found);
+      showRun(found);
       setTab('map');
     }
   };
