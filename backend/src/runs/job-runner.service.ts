@@ -38,7 +38,7 @@ export class JobRunner implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(JobRunner.name);
   readonly events = new Subject<JobEvent>();
   private readonly pending: QueuedJob[] = [];
-  private readonly running = new Map<string, { job: QueuedJob; controller: AbortController }>();
+  private readonly running = new Map<string, { job: QueuedJob; controller: AbortController; done: Promise<void> }>();
   private readonly prepared = new Map<string, Promise<PreparedRun>>();
 
   constructor(
@@ -78,11 +78,14 @@ export class JobRunner implements OnApplicationBootstrap, OnModuleDestroy {
     for (const job of removed) {
       await this.finish(job, 'cancelled', null);
     }
-    for (const { job, controller } of this.running.values()) {
+    const stopping: Promise<void>[] = [];
+    for (const { job, controller, done } of this.running.values()) {
       if (job.runId === runId) {
         controller.abort();
+        stopping.push(done);
       }
     }
+    await Promise.all(stopping);
   }
 
   private pump(): void {
@@ -93,8 +96,9 @@ export class JobRunner implements OnApplicationBootstrap, OnModuleDestroy {
       }
       const [job] = this.pending.splice(index, 1);
       const controller = new AbortController();
-      this.running.set(job.id, { job, controller });
-      void this.execute(job, controller.signal).finally(() => {
+      const done = this.execute(job, controller.signal);
+      this.running.set(job.id, { job, controller, done });
+      void done.finally(() => {
         this.running.delete(job.id);
         if (![...this.running.values()].some((entry) => entry.job.runId === job.runId) &&
             !this.pending.some((entry) => entry.runId === job.runId)) {
