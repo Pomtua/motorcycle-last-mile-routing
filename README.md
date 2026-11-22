@@ -100,7 +100,7 @@ python3 tools/instance_generator/instance_to_csv.py data/instances/C_D1_n100_loo
 Give a directory to convert every `*_instance.json` in it; the output directory also gets `fleets.csv` with each file's riders, capacities and shift:
 
 ```bash
-python3 tools/instance_generator/instance_to_csv.py data/instances data/instance_csv
+python3 tools/instance_generator/instance_to_csv.py data/instances data/instances_csv
 ```
 
 ## Tests
